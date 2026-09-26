@@ -21,6 +21,14 @@ interface ExternalActionTemplate {
   system: ExternalSystem | null
   endpoint_url: string | null
   http_method: string
+  payload_template?: any
+  headers?: any
+  auth_credentials?: any
+  jira_project_key?: string | null
+  jira_issue_type?: string | null
+  email_recipients?: string | null
+  email_subject_template?: string | null
+  email_body_template?: string | null
   active: boolean
   created_at: string
 }
@@ -452,7 +460,7 @@ export default function ExternalActionsPage() {
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        Payload Template (JSON, use {{ alert.id }}, {{ case.title }}, etc.)
+                        {`Payload Template (JSON, use {{ alert.id }}, {{ case.title }}, etc.)`}
                       </label>
                       <textarea
                         value={formData.payload_template}

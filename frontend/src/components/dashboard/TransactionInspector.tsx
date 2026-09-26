@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { apiFetch } from '@/lib/api'
-import { X, Search, AlertTriangle, CheckCircle, Sparkles, Share2, Briefcase, Send, User, FileText, Printer, Loader2, PlusCircle, Globe, Shield } from 'lucide-react'
+import { X, Search, AlertTriangle, CheckCircle, Sparkles, Share2, Briefcase, Send, User, FileText, Printer, Loader2, PlusCircle, Globe, Shield, ShieldAlert } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
 type Props = {
@@ -51,6 +51,7 @@ type CaseData = {
 }
 
 export default function TransactionInspector({ transactionId, alertId, onClose }: Props) {
+  const router = useRouter()
   const [tab, setTab] = useState<'insights' | 'network' | 'documents' | 'case'>('insights')
   const [data, setData] = useState<RCAData | null>(null)
   const [loading, setLoading] = useState(false)

@@ -4,7 +4,7 @@ from rest_framework import viewsets, mixins
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from django.utils import timezone
-from .models import Alert, Transaction, ContextProfile, RegulatoryRule, IntegrationSettings, AiFeedback, AuditCase, AuditCaseComment, AuditCaseAttachment, ContextDocument, RiskAgent, ExternalSystem, IngestedSignal, ReferenceList, ReferenceItem, ApiToken, RiskAgentLog, AIGovernanceEvent, AuditRule, WebhookEvent, ExternalActionTemplate, ExternalActionExecution
+from .models import Alert, Transaction, ContextProfile, RegulatoryRule, IntegrationSettings, AiFeedback, AuditCase, AuditCaseComment, AuditCaseAttachment, ContextDocument, RiskAgent, ExternalSystem, IngestedSignal, ReferenceList, ReferenceItem, ApiToken, RiskAgentLog, AIGovernanceEvent, AuditRule, WebhookEvent, ExternalActionTemplate, ExternalActionExecution, ExcelImportJob
 from .serializers import AlertSerializer, TransactionSerializer, ContextProfileSerializer, RegulatoryRuleSerializer, ContextDocumentSerializer, IntegrationSettingsSerializer, AuditCaseSerializer, AuditCaseCommentSerializer, AuditCaseAttachmentSerializer, RiskAgentSerializer, ExternalSystemSerializer, IngestedSignalSerializer, ReferenceListSerializer, ReferenceItemSerializer, RiskAgentLogSerializer, AIGovernanceEventSerializer, AuditRuleSerializer, WebhookEventSerializer, ExternalActionTemplateSerializer, ExternalActionExecutionSerializer
 from .auth import IsViewerOrAbove, IsAuditorOrAdmin
 from rest_framework.decorators import api_view, permission_classes, parser_classes
@@ -553,7 +553,7 @@ class TransactionViewSet(viewsets.ModelViewSet):
         return response
 
 class AlertViewSet(viewsets.ModelViewSet):
-    queryset = Alert.objects.all().order_by('-timestamp')
+    queryset = Alert.objects.select_related('transaction').order_by('-timestamp')
     serializer_class = AlertSerializer
     permission_classes = [IsViewerOrAbove]
     filterset_fields = ['status', 'severity', 'alert_type', 'vendor']
@@ -1989,10 +1989,13 @@ def export_transactions(request):
 @permission_classes([IsAuditorOrAdmin])
 @parser_classes([MultiPartParser])
 def upload_samples(request):
-    import csv
-    import io
+    """
+    Upload de amostras (CSV e Excel) — delega o parsing pesado ao Excel Studio
+    (excel_service) e usa bulk_create para performance.
+    Compatível com a resposta anterior ({status, imported_count, errors, message}).
+    """
     import uuid
-    from dateutil import parser as date_parser
+    from . import excel_service as es
 
     files = request.FILES.getlist('files')
     if not files:
@@ -2003,53 +2006,49 @@ def upload_samples(request):
 
     for file in files:
         try:
-            if file.name.endswith('.csv'):
-                decoded_file = file.read().decode('utf-8')
-                io_string = io.StringIO(decoded_file)
-                reader = csv.DictReader(io_string)
-                
-                for row in reader:
-                    # Helper to get value from multiple keys
-                    def get_val(row, keys, default=None):
-                        for k in keys:
-                            if k in row and row[k]: return row[k]
-                            # Try case insensitive
-                            for rk in row.keys():
-                                if rk.lower() == k.lower() and row[rk]: return row[rk]
-                        return default
+            name = file.name or ''
+            if not name.lower().endswith(es.SUPPORTED_EXTENSIONS):
+                errors.append(f"Skipped {name}: Only CSV/Excel supported ({es.SUPPORTED_EXTENSIONS}).")
+                continue
 
-                    transaction_id = get_val(row, ['Transaction ID', 'ID', 'Id', 'Transacao'], f"UP-{uuid.uuid4().hex[:8]}")
-                    vendor = get_val(row, ['Vendor', 'Fornecedor', 'Payee'], 'Unknown')
-                    amount = get_val(row, ['Amount', 'Value', 'Valor'], 0)
-                    currency = get_val(row, ['Currency', 'Moeda'], 'BRL')
-                    timestamp_str = get_val(row, ['Timestamp', 'Date', 'Data'], None)
-                    category = get_val(row, ['Category', 'Categoria', 'Class'], 'General')
-                    user_id = get_val(row, ['User', 'Approver', 'Usuario'], 'system')
+            frames = es.read_uploaded_file(file.read(), name)
+            sheet = es.pick_best_sheet(frames)
+            df = frames[sheet]
+            mapping = es.map_columns([str(c) for c in df.columns])
+            rows, skipped = es.standardize_frame(df, mapping)
+            for s in skipped[:20]:
+                errors.append(f"{name}: linha {s['row']} ignorada ({s['reason']})")
 
-                    if timestamp_str:
-                        try:
-                            timestamp = date_parser.parse(timestamp_str)
-                        except:
-                            timestamp = timezone.now()
-                    else:
-                        timestamp = timezone.now()
+            if not rows:
+                errors.append(f"{name}: nenhuma linha válida encontrada (verifique cabeçalhos).")
+                continue
 
-                    # Check uniqueness
-                    if not Transaction.objects.filter(transaction_id=transaction_id).exists():
-                         Transaction.objects.create(
-                            transaction_id=transaction_id,
-                            vendor=vendor,
-                            amount=float(amount) if amount else 0.0,
-                            currency=currency,
-                            timestamp=timestamp,
-                            category=category,
-                            user_id=user_id,
-                            status='Pending' # Ready for analysis
-                        )
-                         total_imported += 1
-            else:
-                errors.append(f"Skipped {file.name}: Only CSV supported for now.")
+            # Deduplica dentro do próprio ficheiro (mantém a 1ª ocorrência)
+            seen, unique_rows = set(), []
+            for r in rows:
+                if r['transaction_id'] in seen:
+                    continue
+                seen.add(r['transaction_id'])
+                unique_rows.append(r)
 
+            existing = set(Transaction.objects.filter(
+                transaction_id__in=[r['transaction_id'] for r in unique_rows]
+            ).values_list('transaction_id', flat=True))
+
+            to_create = [Transaction(**r) for r in unique_rows
+                         if r['transaction_id'] not in existing]
+            created = len(Transaction.objects.bulk_create(to_create, batch_size=500))
+            total_imported += created
+
+            ExcelImportJob.objects.create(
+                file_name=name,
+                uploaded_by=str(getattr(getattr(request, 'user', None), 'id', 'system') or 'system'),
+                sheet=sheet,
+                rows_imported=created,
+                rows_skipped=len(rows) - created,
+                mapping=mapping,
+                status='Completed',
+            )
         except Exception as e:
             errors.append(f"Error processing {file.name}: {str(e)}")
 

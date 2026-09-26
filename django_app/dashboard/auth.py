@@ -16,7 +16,8 @@ class ApiTokenAuthentication(BaseAuthentication):
             rec = ApiToken.objects.get(pk=token)
         except ApiToken.DoesNotExist:
             raise exceptions.AuthenticationFailed('invalid token')
-        user = SimpleNamespace(is_authenticated=True, id=rec.user_id, role=rec.role)
+        user = SimpleNamespace(is_authenticated=True, id=rec.user_id, role=rec.role,
+                               pk=rec.user_id)  # pk exposto p/ DRF throttling/logs
         return (user, {'role': rec.role, 'token': token})
 
 class IsViewerOrAbove(BasePermission):

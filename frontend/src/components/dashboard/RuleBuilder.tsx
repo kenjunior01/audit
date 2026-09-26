@@ -76,7 +76,7 @@ export default function RuleBuilder() {
     const [selectedExternalTemplate, setSelectedExternalTemplate] = useState<number | ''>('')
 
     const [suggestions, setSuggestions] = useState<any[]>([])
-    const [simulationResult, setSimulationResult] = useState<{count: number, total_amount: number, matches: any[]} | null>(null)
+    const [simulationResult, setSimulationResult] = useState<{count: number, total_amount: number, matches: any[], daily_stats?: any[]} | null>(null)
     const [simulating, setSimulating] = useState(false)
     const [exporting, setExporting] = useState(false)
     const [simulationRange, setSimulationRange] = useState<'all' | '30d' | '90d' | '1y'>('all')
@@ -421,7 +421,7 @@ export default function RuleBuilder() {
                                         <div className="flex gap-2">
                                             <select 
                                                 value={selectedExternalTemplate}
-                                                onChange={e => setSelectedExternalTemplate(e.target.value)}
+                                                onChange={e => setSelectedExternalTemplate(e.target.value ? parseInt(e.target.value) : '')}
                                                 className="flex-1 p-2 text-sm border border-indigo-200 dark:border-indigo-700 rounded-lg bg-white dark:bg-gray-800"
                                             >
                                                 <option value="">Selecione um template...</option>

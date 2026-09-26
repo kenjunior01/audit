@@ -122,7 +122,7 @@ export default function RulesPage() {
                 
                 {s.type === 'optimization' && (
                   <div className="mt-3 flex items-center text-sm">
-                    <span className="text-gray-500 mr-2">Atual: <strike>{s.current_value}</strike></span>
+                    <span className="text-gray-500 mr-2">Atual: <s className="text-gray-400">{s.current_value}</s></span>
                     <span className="font-bold text-purple-700">Sugerido: {s.suggested_value}</span>
                   </div>
                 )}

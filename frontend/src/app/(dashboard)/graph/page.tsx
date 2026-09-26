@@ -33,10 +33,13 @@ export default function GraphPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedNode, setSelectedNode] = useState<Node | null>(null)
   const [draggingNode, setDraggingNode] = useState<string | null>(null)
+  const draggingNodeRef = useRef<string | null>(null)
   
   // Ref to hold mutable node state for physics engine without triggering re-renders during calculation
   const simulationRef = useRef<{nodes: Node[], links: any[]}>({ nodes: [], links: [] })
   const requestRef = useRef<number>()
+  const svgRef = useRef<SVGSVGElement | null>(null)
+  const mousePosRef = useRef({ x: 0, y: 0 })
   
   const fetchGraph = (query?: string) => {
     setLoading(true)

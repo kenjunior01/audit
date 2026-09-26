@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect , Suspense} from 'react'
 import { useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
@@ -48,7 +48,7 @@ const isOverdue = (deadline?: string | null) => {
   return new Date(deadline) < new Date()
 }
 
-export default function CasesPage() {
+function CasesPageContent() {
   const [cases, setCases] = useState<AuditCase[]>([])
   const [loading, setLoading] = useState(true)
   const [filterStatus, setFilterStatus] = useState<string>('All')
@@ -663,5 +663,14 @@ function ArrowRight({ className }: { className?: string }) {
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
       <polyline points="9 18 15 12 9 6"></polyline>
     </svg>
+  )
+}
+
+
+export default function CasesPage() {
+  return (
+    <Suspense fallback={null}>
+      <CasesPageContent />
+    </Suspense>
   )
 }

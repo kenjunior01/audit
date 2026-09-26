@@ -1,5 +1,5 @@
 "use client"
-import { useEffect, useState } from 'react'
+import { useEffect, useState , Suspense} from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { apiFetch } from '@/lib/api'
@@ -20,7 +20,7 @@ type Alert = {
   context_severity?: string
 }
 
-export default function AlertsPage() {
+function AlertsPageContent() {
   useRequireToken()
   const searchParams = useSearchParams()
   const [items, setItems] = useState<Alert[]>([])
@@ -368,5 +368,14 @@ export default function AlertsPage() {
         </table>
       </div>
     </div>
+  )
+}
+
+
+export default function AlertsPage() {
+  return (
+    <Suspense fallback={null}>
+      <AlertsPageContent />
+    </Suspense>
   )
 }

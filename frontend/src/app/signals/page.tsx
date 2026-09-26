@@ -167,7 +167,7 @@ export default function SignalsPage() {
           value={sector} 
           onChange={e=>setSector(e.target.value)} 
         />
-        <button className="px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700" onClick={load}>
+        <button className="px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700" onClick={() => load()}>
           Filtrar
         </button>
         {contextSummary && (

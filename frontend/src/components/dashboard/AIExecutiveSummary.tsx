@@ -12,7 +12,7 @@ type AgentReport = {
 
 type SummaryData = {
   title: string
-  insights: Insight[]
+  insights: string[]
   generated_at: string
   risk_level: 'Critical' | 'Moderate' | 'Low'
   agent_reports?: AgentReport[]

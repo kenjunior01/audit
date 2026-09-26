@@ -13,6 +13,13 @@ class Transaction(models.Model):
     user_id = models.CharField(max_length=128, null=True) # ID of user who initiated/approved
     xai_explanation = models.JSONField(null=True, blank=True) # AI Audit Log (Model Version, Feature Weights)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['timestamp'], name='dashboard_tx_ts_idx'),
+            models.Index(fields=['status'], name='dashboard_tx_status_idx'),
+            models.Index(fields=['vendor'], name='dashboard_tx_vendor_idx'),
+        ]
+
 class Alert(models.Model):
     transaction = models.ForeignKey(Transaction, on_delete=models.CASCADE, null=True)
     alert_type = models.CharField(max_length=64)
@@ -23,6 +30,13 @@ class Alert(models.Model):
     vendor = models.CharField(max_length=128, null=True)
     amount = models.DecimalField(max_digits=18, decimal_places=2, null=True)
     materiality = models.FloatField(default=0.0) # 0.0 to 1.0
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['timestamp'], name='dashboard_alert_ts_idx'),
+            models.Index(fields=['severity'], name='dashboard_alert_sev_idx'),
+            models.Index(fields=['status'], name='dashboard_alert_status_idx'),
+        ]
 
 class RegulatoryRule(models.Model):
     country = models.CharField(max_length=64)
@@ -283,6 +297,12 @@ class AuditCase(models.Model):
     action_plan = models.TextField(null=True, blank=True)
     action_due_date = models.DateTimeField(null=True, blank=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['status'], name='dashboard_case_status_idx'),
+            models.Index(fields=['created_at'], name='dashboard_case_created_idx'),
+        ]
+
 class AuditCaseComment(models.Model):
     case = models.ForeignKey(AuditCase, related_name='comments', on_delete=models.CASCADE)
     user_id = models.CharField(max_length=128)
@@ -459,6 +479,31 @@ class ReferenceItem(models.Model):
 
     def __str__(self):
         return f"{self.value} ({self.reference_list.name})"
+
+class ExcelImportJob(models.Model):
+    """Trilha de auditoria das importações Excel/CSV (Excel Studio)."""
+    id = models.AutoField(primary_key=True)
+    STATUS_CHOICES = [
+        ('Completed', 'Concluída'),
+        ('Partial', 'Parcial'),
+        ('Failed', 'Falhada'),
+    ]
+    file_name = models.CharField(max_length=256)
+    uploaded_by = models.CharField(max_length=128, null=True, blank=True)
+    sheet = models.CharField(max_length=128, null=True, blank=True)
+    rows_imported = models.IntegerField(default=0)
+    rows_skipped = models.IntegerField(default=0)
+    mapping = models.JSONField(default=dict, blank=True)   # campo canônico → coluna
+    errors = models.JSONField(default=list, blank=True)    # amostra de linhas inválidas
+    status = models.CharField(max_length=32, choices=STATUS_CHOICES, default='Completed')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.file_name} ({self.rows_imported} linhas, {self.status})"
+
 
 class AIGovernanceEvent(models.Model):
     id = models.AutoField(primary_key=True)

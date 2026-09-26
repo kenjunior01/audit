@@ -4,8 +4,8 @@ import os
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 SECRET_KEY = os.environ.get('AUDIT_DJANGO_SECRET_KEY', 'change-me')
-DEBUG = True
-ALLOWED_HOSTS = ['*']
+DEBUG = os.environ.get('AUDIT_DEBUG', 'False').lower() in ('1', 'true', 'yes', 'on')
+ALLOWED_HOSTS = [h.strip() for h in os.environ.get('AUDIT_ALLOWED_HOSTS', '*').split(',') if h.strip()]
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -53,9 +53,30 @@ WSGI_APPLICATION = 'auditportal.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': os.path.join(os.path.dirname(BASE_DIR), 'audit_v2.db'),
+        'NAME': os.environ.get('AUDIT_DB_NAME', os.path.join(os.path.dirname(BASE_DIR), 'audit_v2.db')),
     }
 }
+
+# PostgreSQL opcional (recomendado em produção). Exemplo:
+#   AUDIT_DATABASE_URL=postgres://user:pass@localhost:5432/audit
+_db_url = os.environ.get('AUDIT_DATABASE_URL')
+if _db_url:
+    import re as _re
+    _m = _re.match(
+        r'(?P<engine>\w+)://(?P<user>[^:]*):(?P<pass>[^@]*)@(?P<host>[^:/]*)(?::(?P<port>\d+))?/(?P<name>.+)',
+        _db_url)
+    if _m:
+        _engines = {'postgres': 'django.db.backends.postgresql', 'postgresql': 'django.db.backends.postgresql',
+                    'mysql': 'django.db.backends.mysql', 'sqlite': 'django.db.backends.sqlite3'}
+        DATABASES = {'default': {
+            'ENGINE': _engines.get(_m.group('engine'), 'django.db.backends.postgresql'),
+            'NAME': _m.group('name'),
+            'USER': _m.group('user') or None,
+            'PASSWORD': _m.group('pass') or '',
+            'HOST': _m.group('host'),
+            'PORT': _m.group('port') or '',
+            'CONN_MAX_AGE': 60,
+        }}
 
 LANGUAGE_CODE = 'pt-br'
 TIME_ZONE = 'UTC'
@@ -95,6 +116,33 @@ REST_FRAMEWORK = {
     ),
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 50,
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': os.environ.get('AUDIT_THROTTLE_ANON', '60/min'),
+        'user': os.environ.get('AUDIT_THROTTLE_USER', '600/min'),
+    },
 }
 
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_ALL_ORIGINS = os.environ.get('AUDIT_CORS_ALLOW_ALL', 'True' if DEBUG else 'False').lower() in ('1', 'true', 'yes', 'on')
+CORS_ALLOWED_ORIGINS = [
+    o.strip() for o in os.environ.get('AUDIT_CORS_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000').split(',')
+    if o.strip()
+]
+
+# --- Segurança (hardening) ------------------------------------------------
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_BROWSER_XSS_FILTER = True
+X_FRAME_OPTIONS = 'DENY'
+if os.environ.get('AUDIT_SSL_REDIRECT', 'False').lower() in ('1', 'true', 'yes'):
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+if not DEBUG and os.environ.get('AUDIT_DJANGO_SECRET_KEY'):
+    SECURE_HSTS_SECONDS = int(os.environ.get('AUDIT_HSTS_SECONDS', 31536000))
+
+# Limite de upload (Excel Studio: 25 MB)
+DATA_UPLOAD_MAX_MEMORY_SIZE = 25 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 25 * 1024 * 1024

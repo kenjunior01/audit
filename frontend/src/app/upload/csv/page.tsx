@@ -65,10 +65,11 @@ export default function UploadSamplesPage() {
   return (
     <div className="space-y-6 max-w-2xl mx-auto p-6 bg-white rounded-lg shadow">
       <div>
-        <h2 className="text-xl font-semibold text-gray-800">Coleta e Análise de Amostras (100%)</h2>
+        <h2 className="text-xl font-semibold text-gray-800">Coleta e Análise de Amostras</h2>
         <p className="text-sm text-gray-500 mt-1">
-            Faça upload de múltiplos arquivos CSV para ingestão em massa. 
+            Faça upload de múltiplos arquivos CSV/Excel para ingestão em massa. 
             O sistema analisará cada transação usando regras, agentes e modelos de IA.
+            Para importação com mapeamento assistido, use o <a href="/excel" className="text-blue-600 underline">Excel Studio</a>.
         </p>
       </div>
 
@@ -76,7 +77,7 @@ export default function UploadSamplesPage() {
         <input 
             type="file" 
             multiple 
-            accept=".csv"
+            accept=".csv,.xlsx,.xlsm,.xls"
             className="hidden" 
             id="file-upload"
             onChange={e => setFiles(e.target.files)} 
@@ -86,7 +87,7 @@ export default function UploadSamplesPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
             </svg>
             <span className="text-blue-600 font-medium hover:text-blue-700">Clique para selecionar arquivos</span>
-            <span className="text-xs text-gray-500 mt-1">Suporta múltiplos CSVs</span>
+            <span className="text-xs text-gray-500 mt-1">Suporta múltiplos CSVs e Excels</span>
         </label>
         {files && files.length > 0 && (
             <div className="mt-4 text-sm text-gray-700 bg-gray-100 p-2 rounded">

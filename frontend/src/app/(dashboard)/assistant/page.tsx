@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect , Suspense} from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { apiFetch } from '@/lib/api'
@@ -29,7 +29,7 @@ type Message = {
   data?: any
 }
 
-export default function AssistantPage() {
+function AssistantPageContent() {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
@@ -334,5 +334,14 @@ export default function AssistantPage() {
         </Card>
       </motion.div>
     </div>
+  )
+}
+
+
+export default function AssistantPage() {
+  return (
+    <Suspense fallback={null}>
+      <AssistantPageContent />
+    </Suspense>
   )
 }

@@ -34,6 +34,8 @@ interface WebhookEvent {
   attempt_count: number
   last_attempt_at: string | null
   created_at: string
+  system?: number | null
+  error_message?: string | null
 }
 
 export default function IntegrationsPage() {

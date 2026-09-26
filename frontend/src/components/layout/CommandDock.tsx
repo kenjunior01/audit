@@ -23,7 +23,8 @@ import {
   Users,
   ShieldCheck,
   Link2,
-  Power
+  Power,
+  FileSpreadsheet
 } from "lucide-react"
 
 const menuItems = [
@@ -35,6 +36,7 @@ const menuItems = [
   { path: "/sla", label: "SLA", icon: Clock },
   { path: "/assistant", label: "Audit AI", icon: Bot },
   { path: "/agents", label: "Agentes", icon: Users },
+  { path: "/excel", label: "Excel Studio", icon: FileSpreadsheet },
   { type: "divider" },
   { path: "/graph", label: "Conexões", icon: Network },
   { path: "/geo-risk", label: "Geo Risco", icon: Map },

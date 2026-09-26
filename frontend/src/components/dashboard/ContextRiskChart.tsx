@@ -119,7 +119,7 @@ export default function ContextRiskChart() {
                                 tickLine={false}
                             />
                             <Tooltip 
-                                formatter={(value: number) => [`${value}%`, 'Score de Risco']}
+                                formatter={(value: any) => [`${value}%`, 'Score de Risco']}
                                 contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                                 cursor={{fill: 'transparent'}}
                             />

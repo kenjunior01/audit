@@ -156,7 +156,7 @@ export default function SLAPage() {
                                         <Cell fill="#10b981" />
                                         <Cell fill="#ef4444" />
                                     </Pie>
-                                    <Tooltip formatter={(val: number) => `${val.toFixed(1)}%`} />
+                                    <Tooltip formatter={(val: any) => `${val.toFixed(1)}%`} />
                                     <Legend verticalAlign="bottom" height={36} />
                                     <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" className="fill-slate-900 text-2xl font-bold">
                                         {stats?.compliance_rate}%
