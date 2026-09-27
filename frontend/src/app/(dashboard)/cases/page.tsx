@@ -11,8 +11,10 @@ import {
   AlertTriangle, 
   X,
   Download,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Sparkles
 } from 'lucide-react'
+import { askCopilot } from '@/lib/copilot'
 import { apiFetch } from '@/lib/api'
 import { CaseDetailsDrawer } from '@/components/dashboard/CaseDetailsDrawer'
 
@@ -546,9 +548,17 @@ function CasesPageContent() {
                       {new Date(c.updated_at).toLocaleDateString()}
                     </td>
                     <td className="p-4">
-                      <button className="text-gray-400 hover:text-indigo-600 p-2 rounded-full hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors">
-                        <ArrowRight className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); askCopilot(`Explica o caso ${c.id} (${c.title}) e o que devo fazer`) }}
+                          className="text-gray-400 hover:text-indigo-600 p-2 rounded-full hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors"
+                          title="Perguntar ao Copiloto sobre este caso">
+                          <Sparkles className="w-4 h-4" />
+                        </button>
+                        <button className="text-gray-400 hover:text-indigo-600 p-2 rounded-full hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors">
+                          <ArrowRight className="w-4 h-4" />
+                        </button>
+                      </div>
                     </td>
                   </motion.tr>
                 ))}

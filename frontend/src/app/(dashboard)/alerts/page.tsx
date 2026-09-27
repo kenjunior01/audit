@@ -3,6 +3,7 @@ import { useEffect, useState , Suspense} from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { apiFetch } from '@/lib/api'
+import { askCopilot } from '@/lib/copilot'
 import { useRequireToken } from '@/lib/auth'
 import { X, Download, FileSpreadsheet, FileText } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -349,6 +350,9 @@ function AlertsPageContent() {
                   <td className="px-3 py-2">
                     <div className="flex items-center space-x-2">
                       <Link href={`/alerts/${it.id}`} className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200">Detalhes</Link>
+                      <button onClick={() => askCopilot(`Explica o alerta ${it.id} (${it.alert_type}) e o que devo fazer`)}
+                        className="px-2 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200"
+                        title="Perguntar ao Copiloto sobre este alerta">IA</button>
                       <select className="border p-1 text-sm" defaultValue="" onChange={async e=>{const v=e.target.value; if(!v)return; await apiFetch(`/alerts/${it.id}/status?status=${encodeURIComponent(v)}`, {method:'POST'}); load();}}>
                         <option value="">Status</option>
                         <option value="triage">Triage</option>

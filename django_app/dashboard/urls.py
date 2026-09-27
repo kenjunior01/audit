@@ -4,7 +4,8 @@ from .views import AlertViewSet, TransactionViewSet, export_alerts, export_trans
 from .excel_views import excel_preview, excel_import, excel_analyze, excel_reconcile, excel_export, excel_assistant, excel_assistant_apply
 from .copilot_views import (copilot_chat, copilot_briefing, copilot_stream,
                             copilot_feedback, copilot_insights,
-                            copilot_feedback_stats, copilot_digest)
+                            copilot_feedback_stats, copilot_digest,
+                            copilot_digest_pdf)
 
 router = DefaultRouter()
 router.register(r'governance', AIGovernanceViewSet, basename='governance')
@@ -83,4 +84,6 @@ urlpatterns = [
     path('ai/copilot/feedback/stats', copilot_feedback_stats,
          name='copilot_feedback_stats'),
     path('ai/copilot/digest', copilot_digest, name='copilot_digest'),
+    path('ai/copilot/digest/pdf', copilot_digest_pdf,
+         name='copilot_digest_pdf'),
 ]

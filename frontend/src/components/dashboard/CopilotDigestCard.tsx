@@ -7,11 +7,11 @@
  */
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { apiFetch } from '@/lib/api'
+import { apiFetch, apiDownload } from '@/lib/api'
 import { Card, CardContent } from "@/components/ui/card"
 import {
   CalendarClock, Loader2, RefreshCcw, Zap, ShieldAlert, AlertTriangle,
-  Info, Mail, Archive, MailX, Star,
+  Info, Mail, Archive, MailX, Star, FileDown,
 } from 'lucide-react'
 
 type Signal = { level: 'critical' | 'warning' | 'info'; title: string; detail: string; action?: { label: string; href: string } }
@@ -63,6 +63,7 @@ export default function CopilotDigestCard() {
   const [digest, setDigest] = useState<DigestRow | null>(null)
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
+  const [downloading, setDownloading] = useState(false)
   const [notice, setNotice] = useState('')
 
   const load = async () => {
@@ -90,6 +91,16 @@ export default function CopilotDigestCard() {
       else { setNotice('Digest gerado com sucesso.'); await load() }
     } catch { setNotice('Não foi possível gerar o digest.') }
     finally { setGenerating(false) }
+  }
+
+  const downloadPdf = async () => {
+    setDownloading(true)
+    setNotice('')
+    try {
+      await apiDownload('/ai/copilot/digest/pdf',
+        `digest-${digest?.period || 'daily'}-${digest?.day || new Date().toISOString().slice(0, 10)}.pdf`)
+    } catch { setNotice('Não foi possível descarregar o PDF.') }
+    finally { setDownloading(false) }
   }
 
   useEffect(() => { load() }, [])
@@ -157,6 +168,11 @@ export default function CopilotDigestCard() {
               className="p-2 rounded-lg text-slate-400 hover:text-amber-400 hover:bg-slate-800 disabled:opacity-40"
               title="Gerar digest agora (admin)">
               <Zap className={`w-4 h-4 ${generating ? 'animate-pulse text-amber-400' : ''}`} />
+            </button>
+            <button onClick={downloadPdf} disabled={downloading}
+              className="p-2 rounded-lg text-slate-400 hover:text-emerald-400 hover:bg-slate-800 disabled:opacity-40"
+              title="Descarregar PDF executivo">
+              {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
             </button>
           </div>
         </div>

@@ -168,14 +168,25 @@ def send_copilot_digest(period="daily", send_email=True):
     recipients = list(getattr(dj_settings, "AUDIT_DIGEST_EMAILS", []) or [])
     status = "stored"
     if send_email and recipients:
+        attachments = []
         try:
-            send_mail(
-                f"[Audit] Resumo {period} — {digest['headline'][:80]}",
-                cs.digest_email_body(digest),
-                dj_settings.DEFAULT_FROM_EMAIL,
-                recipients,
-                fail_silently=False,
+            attachments.append((
+                f"digest-{period}-{timezone.localdate()}.pdf",
+                cs.build_digest_pdf(digest),
+                "application/pdf"))
+        except Exception as e:
+            logger.warning("digest pdf falhou (email segue sem anexo): %s", e)
+        try:
+            # EmailMessage (e não send_mail) para suportar anexo PDF
+            from django.core.mail import EmailMessage
+            email = EmailMessage(
+                subject=f"[Audit] Resumo {period} — {digest['headline'][:80]}",
+                body=cs.digest_email_body(digest),
+                from_email=dj_settings.DEFAULT_FROM_EMAIL,
+                to=recipients,
+                attachments=attachments or None,
             )
+            email.send(fail_silently=False)
             status = "sent"
         except Exception as e:
             logger.warning("digest email falhou: %s", e)

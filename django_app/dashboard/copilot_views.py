@@ -209,3 +209,42 @@ def copilot_digest(request):
                                              "Digest falhou.")},
                         status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     return Response(result)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def copilot_digest_pdf(request):
+    """PDF executivo do digest — para download no frontend e arquivo.
+    Usa o digest guardado mais recente (filtro ?period= opcional); se
+    ainda não existir nenhum, gera o payload na hora sem persistir.
+    Erros de PDF devolvem 500 com mensagem clara."""
+    from django.http import HttpResponse
+    from django.utils import timezone
+    from .models import CopilotDigest
+
+    period = str(request.query_params.get("period") or "")[:10]
+    qs = CopilotDigest.objects.all()
+    if period in ("daily", "weekly"):
+        qs = qs.filter(period=period)
+    row = qs.first()
+    if row:
+        digest = row.payload
+        fname_period = row.period
+    else:
+        fname_period = period if period in ("daily", "weekly") else "daily"
+        try:
+            digest = cs.build_digest(fname_period)
+        except Exception as e:
+            return Response({"error": f"Não foi possível gerar o digest: {e}"},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    try:
+        pdf = cs.build_digest_pdf(digest)
+    except Exception as e:
+        logger.exception("copilot_digest_pdf falhou")
+        return Response({"error": f"Não foi possível gerar o PDF: {e}"},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    resp = HttpResponse(pdf, content_type="application/pdf")
+    resp["Content-Disposition"] = (
+        f'attachment; filename="digest-{fname_period}-'
+        f'{timezone.localdate()}.pdf"')
+    return resp

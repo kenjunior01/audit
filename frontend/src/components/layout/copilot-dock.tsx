@@ -13,16 +13,20 @@
  *   melhoria contínua do modelo de suporte).
  * - EXPORTAR conversa em Markdown; conversa persistente por sessão.
  * - Prompts contextuais consoante a página atual (rota).
+ * - INTEGRAÇÃO CONTEXTUAL: qualquer página pode chamar askCopilot(pergunta)
+ *   (evento 'copilot:ask') — o painel abre e envia com contexto.
+ * - VOZ: dita a pergunta com o microfone (SpeechRecognition pt-PT).
  * Atalho: Ctrl/Cmd + J.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { apiFetch } from '@/lib/api'
+import { COPILOT_ASK_EVENT } from '@/lib/copilot'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Sparkles, Loader2, Send, X, Copy, Check, Presentation, Lightbulb,
   ArrowRight, RotateCcw, AlertTriangle, CheckCircle2, Info, ShieldAlert,
-  Download, ThumbsUp, ThumbsDown, XCircle, Zap,
+  Download, ThumbsUp, ThumbsDown, XCircle, Zap, Mic, MicOff,
 } from 'lucide-react'
 
 /* ----------------------------- tipos ----------------------------- */
@@ -112,7 +116,9 @@ export function CopilotDock() {
   const [liveTrace, setLiveTrace] = useState<LiveTrace[]>([])
   const [signals, setSignals] = useState<Signal[]>([])
   const [signalsOpen, setSignalsOpen] = useState(false)
+  const [listening, setListening] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const recRef = useRef<any>(null)
 
   // persiste a conversa (sessionStorage — sobrevive a navegação e refresh)
   useEffect(() => {
@@ -228,6 +234,49 @@ export function CopilotDock() {
       }
     } finally { setLoading(false) }
   }, [loading, messages, pathname])
+
+  /* -------- integração contextual: askCopilot() de qualquer página -------
+   * qualquer componente dispara askCopilot('Explica o alerta 42') e o
+   * dock abre e envia a pergunta com o contexto da página atual. */
+  useEffect(() => {
+    const onAsk = (e: Event) => {
+      const q = (e as CustomEvent).detail?.question
+      if (!q) return
+      setOpen(true)
+      send(q)
+    }
+    window.addEventListener(COPILOT_ASK_EVENT, onAsk)
+    return () => window.removeEventListener(COPILOT_ASK_EVENT, onAsk)
+  }, [send])
+
+  /* -------- voz: dita a pergunta (SpeechRecognition, pt-PT) -------- */
+  const toggleVoice = useCallback(() => {
+    if (listening) {
+      recRef.current?.stop()
+      setListening(false)
+      return
+    }
+    const SR = (typeof window !== 'undefined' &&
+      ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition))
+    if (!SR) return
+    try {
+      const rec = new SR()
+      rec.lang = 'pt-PT'
+      rec.interimResults = false
+      rec.maxAlternatives = 1
+      rec.onresult = (ev: any) => {
+        const said = ev.results?.[0]?.[0]?.transcript || ''
+        if (said) setInput(prev => (prev ? `${prev} ${said}` : said))
+      }
+      rec.onend = () => setListening(false)
+      rec.onerror = () => setListening(false)
+      recRef.current = rec
+      rec.start()
+      setListening(true)
+    } catch { setListening(false) }
+  }, [listening])
+  const voiceSupported = typeof window !== 'undefined' &&
+    !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
 
   const rate = useCallback(async (idx: number, rating: number) => {
     const m = messages[idx]
@@ -485,9 +534,20 @@ export function CopilotDock() {
 
             {/* Input */}
             <div className="border-t border-slate-800 p-3 flex gap-2">
+              {voiceSupported && (
+                <button onClick={toggleVoice} disabled={loading}
+                  className={`px-2.5 rounded-xl border transition-colors disabled:opacity-40 ${
+                    listening
+                      ? 'bg-red-600 border-red-500 text-white animate-pulse'
+                      : 'bg-slate-800 border-slate-700 text-slate-300 hover:text-blue-300 hover:border-blue-500'}`}
+                  title={listening ? 'A ouvir… clique para parar' : 'Ditar pergunta (voz)'}
+                  aria-label="Ditar pergunta">
+                  {listening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                </button>
+              )}
               <input value={input} onChange={e => setInput(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) } }}
-                placeholder="Ex.: quais os casos fora do prazo?"
+                placeholder={listening ? 'A ouvir… fale agora' : 'Ex.: quais os casos fora do prazo?'}
                 disabled={loading}
                 className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-blue-500 disabled:opacity-50" />
               <button onClick={() => send(input)} disabled={loading || !input.trim()}

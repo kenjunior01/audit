@@ -1853,3 +1853,109 @@ def digest_email_body(digest: dict) -> str:
     lines.append("Gerado automaticamente pelo Copiloto Global em "
                  f"{digest.get('generated_at', '')}")
     return "\n".join(lines)
+
+
+def build_digest_pdf(digest: dict) -> bytes:
+    """PDF executivo do digest (reportlab) — anexo do email e download
+    no frontend. Composição: cabeçalho, headline, KPIs, sinais priorizados,
+    insights e qualidade do copiloto. Import lazy: o reportlab só é
+    carregado quando um PDF é realmente pedido. Best-effort — quem chama
+    trata de excepções."""
+    import io
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
+                                    Table, TableStyle)
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=1.6 * cm,
+                            bottomMargin=1.6 * cm,
+                            leftMargin=1.8 * cm, rightMargin=1.8 * cm,
+                            title=f"Digest {digest.get('period', 'daily')}")
+    ss = getSampleStyleSheet()
+    h1 = ParagraphStyle("DigH1", parent=ss["Title"], fontSize=17,
+                        textColor=colors.HexColor("#1e293b"))
+    lead = ParagraphStyle("DigLead", parent=ss["Normal"], fontSize=11,
+                          textColor=colors.HexColor("#334155"), spaceAfter=6)
+    small = ParagraphStyle("DigSmall", parent=ss["Normal"], fontSize=9,
+                           textColor=colors.HexColor("#64748b"))
+    sec = ParagraphStyle("DigSec", parent=ss["Heading2"], fontSize=12,
+                         spaceBefore=10, spaceAfter=4,
+                         textColor=colors.HexColor("#0f172a"))
+
+    story = [
+        Paragraph(f"Resumo {digest.get('period', 'daily')} — "
+                  "Plataforma de Auditoria", h1),
+        Paragraph(f"Copiloto Global · gerado em "
+                  f"{digest.get('generated_at', '')[:19].replace('T', ' ')}",
+                  small),
+        Spacer(1, 8),
+        Paragraph(f"<b>{digest.get('headline', '')}</b>", lead),
+    ]
+
+    # KPIs
+    k = digest.get("kpis") or {}
+    rows = [["Transações", "Valor total", "Alertas abertos", "Críticos"],
+            [str(k.get("transactions_total", "—")),
+             f"€{float(k.get('transactions_amount') or 0):,.2f}".replace(
+                 ",", "X").replace(".", ",").replace("X", "."),
+             str(k.get("open_alerts", "—")),
+             str(k.get("critical_alerts", "—"))],
+            ["Casos abertos", "Fora do prazo", "Benford MAD", "Tendência"],
+            [str(k.get("cases_open", "—")),
+             str(k.get("cases_overdue", "—")),
+             str(k.get("benford_mad", "—") if k.get("benford_mad") is not None
+                 else "—"),
+             str(k.get("trend", "—"))]]
+    tbl = Table(rows, colWidths=[4.3 * cm] * 4)
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e3a8a")),
+        ("BACKGROUND", (0, 2), (-1, 2), colors.HexColor("#1e3a8a")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("TEXTCOLOR", (0, 2), (-1, 2), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("ROWBACKGROUNDS", (0, 1), (-1, 1), [colors.HexColor("#f1f5f9")]),
+        ("ROWBACKGROUNDS", (0, 3), (-1, 3), [colors.HexColor("#f1f5f9")]),
+    ]))
+    story += [Paragraph("Indicadores-chave", sec), tbl]
+
+    # Sinais
+    signals = digest.get("signals") or []
+    if signals:
+        story.append(Paragraph("Sinais que precisam de atenção", sec))
+        for s in signals:
+            flag = {"critical": "[CRÍTICO]", "warning": "[AVISO]"}.get(
+                s.get("level"), "[INFO]")
+            story.append(Paragraph(
+                f"<b>{flag} {s.get('title', '')}</b> — {s.get('detail', '')}"
+                + (f" (Ação: {s['action']['label']} — "
+                   f"{s['action']['href']})" if s.get("action") else ""),
+                lead))
+
+    # Insights
+    insights = digest.get("insights") or []
+    if insights:
+        story.append(Paragraph("Insights do Copiloto", sec))
+        for i in insights[:6]:
+            story.append(Paragraph(f"• <b>{i.get('title', '')}</b> — "
+                                   f"{i.get('detail', '')}", lead))
+
+    # Qualidade do copiloto
+    fb = digest.get("feedback") or {}
+    if fb.get("avg_rating") is not None:
+        story.append(Paragraph("Qualidade do suporte (Copiloto)", sec))
+        story.append(Paragraph(
+            f"Avaliação média: <b>{fb['avg_rating']}/5</b> "
+            f"({fb.get('total', 0)} avaliações)", lead))
+        for low in fb.get("recent_low") or []:
+            story.append(Paragraph(
+                f"• ({low.get('rating')}/5) “{low.get('question', '')}” "
+                f"— {low.get('page', '—')}", small))
+
+    doc.build(story)
+    return buf.getvalue()
