@@ -34,6 +34,12 @@ type Insight = { title: string; detail: string; tone: 'info' | 'warn' | 'danger'
 type Action = { label: string; href: string }
 type Table = { columns: string[]; rows: unknown[][]; shown: number; total: number }
 type TraceEntry = { tool: string; title: string; ok?: boolean; ms?: number }
+type ProposedAction = {
+  action: string
+  params: Record<string, unknown>
+  label: string
+  detail?: string
+}
 type CopilotResponse = {
   answer: string
   mode: 'llm' | 'rules'
@@ -44,6 +50,7 @@ type CopilotResponse = {
   tables: Table[]
   followups: string[]
   latency_ms?: number
+  proposed_action?: ProposedAction
 }
 type Message = { role: 'user' | 'assistant'; content: string; data?: CopilotResponse; rated?: number }
 type LiveTrace = TraceEntry
@@ -278,6 +285,23 @@ export function CopilotDock() {
   const voiceSupported = typeof window !== 'undefined' &&
     !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
 
+  /* -------- execução de ações propostas (com confirmação humana) -------- */
+  const executeAction = useCallback(async (pa: ProposedAction): Promise<string> => {
+    let resultText = '❌ Não foi possível executar a ação.'
+    try {
+      const r = await apiFetch('/ai/copilot/act', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: pa.action, params: pa.params }),
+      })
+      const data = await r.json()
+      if (r.ok && data.ok) resultText = `✅ ${data.summary || 'Ação executada.'} (registada no log de auditoria)`
+      else resultText = `❌ ${data.error || `Erro ${r.status}`}`
+    } catch { /* mensagem default de erro */ }
+    setMessages(m => [...m, { role: 'assistant', content: resultText }])
+    return resultText
+  }, [])
+
   const rate = useCallback(async (idx: number, rating: number) => {
     const m = messages[idx]
     if (!m?.data || m.rated) return
@@ -489,7 +513,8 @@ export function CopilotDock() {
                   rated={m.rated}
                   onRate={rating => rate(i, rating)}
                   onAction={href => { router.push(href) }}
-                  onFollowup={q => send(q)} />
+                  onFollowup={q => send(q)}
+                  onExecute={executeAction} />
               ))}
 
               {loading && (
@@ -563,15 +588,24 @@ export function CopilotDock() {
 }
 
 /* ------------------- mensagem rica do copiloto ------------------- */
-function CopilotMessage({ data, fallback, rated, onRate, onAction, onFollowup }: {
+function CopilotMessage({ data, fallback, rated, onRate, onAction, onFollowup, onExecute }: {
   data?: CopilotResponse
   fallback: string
   rated?: number
   onRate?: (rating: number) => void
   onAction: (href: string) => void
   onFollowup: (q: string) => void
+  onExecute?: (pa: ProposedAction) => Promise<string>
 }) {
   const [copied, setCopied] = useState(false)
+  const [execState, setExecState] = useState<'idle' | 'busy' | 'done'>('idle')
+  const pa = data?.proposed_action
+  const confirmAction = async () => {
+    if (!pa || !onExecute || execState !== 'idle') return
+    setExecState('busy')
+    await onExecute(pa)
+    setExecState('done')
+  }
   const traceEntries: TraceEntry[] = data?.trace?.length
     ? data.trace
     : (data?.tools_used || []).map(t => ({ tool: t, title: t }))
@@ -624,6 +658,30 @@ function CopilotMessage({ data, fallback, rated, onRate, onAction, onFollowup }:
             </div>
           )
         })}
+
+        {/* Cartão de confirmação de ação (agentic — com confirmação humana) */}
+        {pa && (
+          <div className="rounded-xl border border-indigo-800 bg-indigo-950/50 px-3 py-2.5">
+            <div className="flex items-start gap-2">
+              <Zap className="w-4 h-4 mt-0.5 shrink-0 text-indigo-300" />
+              <div className="flex-1">
+                <p className="text-xs font-semibold text-indigo-200">Ação proposta — confirmação necessária</p>
+                <p className="text-[11px] text-slate-300 mt-1">{pa.label}</p>
+                {pa.detail && <p className="text-[10px] text-slate-400 mt-1">{pa.detail}</p>}
+                <div className="flex items-center gap-1.5 mt-2">
+                  <button onClick={confirmAction} disabled={execState !== 'idle'}
+                    className="text-[11px] px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white font-medium disabled:opacity-50">
+                    {execState === 'busy' ? 'A executar…' : execState === 'done' ? 'Executada ✓' : 'Confirmar'}
+                  </button>
+                  <button onClick={() => setExecState('done')} disabled={execState !== 'idle'}
+                    className="text-[11px] px-2.5 py-1 rounded-md border border-slate-700 text-slate-300 hover:border-slate-500 disabled:opacity-50">
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Tabelas de dados vivos */}
         {data?.tables?.map((t, i) => (

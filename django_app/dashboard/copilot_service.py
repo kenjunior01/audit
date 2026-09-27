@@ -1555,14 +1555,34 @@ def chat_events(question: str, history: list = None, page: str = None):
     llm = call_ollama_copilot(question, results, history)
     base = {"tools_used": tool_names, "trace": trace, "tables": tables,
             "latency_ms": int((time.time() - t0) * 1000)}
+
+    # proposta de AÇÃO (nunca executa — frontend pede confirmação;
+    # a execução real acontece em POST /ai/copilot/act com whitelist)
+    try:
+        from . import copilot_actions as ca
+        prop = ca.detect_action(question)
+    except Exception as e:
+        logger.warning("detect_action falhou: %s", e)
+        prop = None
+    if prop:
+        base["proposed_action"] = prop
+
     if llm:
-        yield {"event": "final", "data": {**base, "answer": llm["answer"],
+        ans = llm["answer"]
+        if prop:
+            ans += (f"\n\n**Ação proposta:** {prop['label']} — "
+                    "confirme abaixo para executar.")
+        yield {"event": "final", "data": {**base, "answer": ans,
                 "mode": "llm", "insights": llm["insights"] or insights[:4],
                 "actions": llm["actions"] or actions,
                 "followups": llm["followups"] or followups}}
         return
+    ans = rule_answer or "Não encontrei dados para esta pergunta."
+    if prop:
+        ans += (f"\n\n**Ação proposta:** {prop['label']} — "
+                "confirme abaixo para executar.")
     yield {"event": "final", "data": {**base,
-            "answer": rule_answer or "Não encontrei dados para esta pergunta.",
+            "answer": ans,
             "mode": "rules", "insights": insights, "actions": actions,
             "followups": followups}}
 

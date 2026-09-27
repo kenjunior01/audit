@@ -248,3 +248,35 @@ def copilot_digest_pdf(request):
         f'attachment; filename="digest-{fname_period}-'
         f'{timezone.localdate()}.pdf"')
     return resp
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def copilot_act(request):
+    """Executa uma AÇÃO da whitelist do copiloto, após confirmação
+    explícita do utilizador no frontend. O chat apenas PROPÕE
+    (detect_action) — a execução passa SEMPRE por aqui, com validação
+    de ação/parâmetros/papel e registo no ImmutableAuditLog.
+    Body: {action, params}. Papéis: admin/auditor (viewer → 403)."""
+    from . import copilot_actions as ca
+
+    auth = getattr(request, "auth", None)
+    role = (auth.get("role") if isinstance(auth, dict)
+            else getattr(auth, "role", None)) or ""
+    user = getattr(request, "user", None)
+    username = str(getattr(user, "username", "")
+                   or getattr(user, "id", "")
+                   or getattr(user, "pk", "") or "")
+
+    action = str(request.data.get("action") or "")
+    params = request.data.get("params")
+    if params is not None and not isinstance(params, dict):
+        return Response({"error": "params deve ser um objeto."},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    result = ca.execute_action(action, params or {}, username=username,
+                               role=role)
+    if result.get("ok"):
+        return Response(result)
+    return Response({"error": result.get("error", "Falha na ação.")},
+                    status=result.get("status_code", 400))
