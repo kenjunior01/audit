@@ -8,6 +8,7 @@ import ForecastChart from '@/components/dashboard/ForecastChart'
 import ContextRiskChart from '@/components/dashboard/ContextRiskChart'
 import AIExecutiveSummary from '@/components/dashboard/AIExecutiveSummary'
 import AIGovernanceDashboard from '@/components/dashboard/AIGovernanceDashboard'
+import CopilotBriefingCard from '@/components/dashboard/CopilotBriefingCard'
 
 type Stats = {
   total_transactions: number
@@ -110,6 +111,8 @@ export default function DashboardPage() {
         <h1 className="text-2xl font-bold text-gray-800">Visão Geral</h1>
         <div className="text-sm text-gray-500">Última atualização: {new Date().toLocaleTimeString()}</div>
       </div>
+
+      <CopilotBriefingCard />
       
       {contextSummary && (
         <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 flex flex-wrap items-center gap-4 text-sm text-indigo-900">

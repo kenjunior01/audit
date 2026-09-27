@@ -2,6 +2,7 @@
 import '../styles/globals.css'
 import type { ReactNode } from 'react'
 import { CommandDock } from '@/components/layout/CommandDock'
+import { CopilotDock } from '@/components/layout/copilot-dock'
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
@@ -10,6 +11,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <div className="min-h-screen flex">
           {/* New Command Dock Sidebar */}
           <CommandDock />
+          <CopilotDock />
           
           {/* Main Content Area */}
           <main className="flex-1 ml-[4.5rem] transition-all duration-300 relative">

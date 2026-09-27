@@ -2,6 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import AlertViewSet, TransactionViewSet, export_alerts, export_transactions, upload_samples, process_pending_analysis, upload_document, my_profile, upsert_profile, analyze_regulation, analyze_news, wizard, RegulatoryRuleViewSet, fetch_news_sources, fetch_regulatory_sources, context_stats, forecast_risk, analyze_root_cause, geo_risks, suggest_rules, ContextDocumentViewSet, graph_analysis, IntegrationSettingsViewSet, ai_user_insights, submit_ai_feedback, audit_chat, execute_ai_action, AuditCaseViewSet, AuditCaseCommentViewSet, AuditCaseAttachmentViewSet, case_report, generate_case_report, RiskAgentViewSet, simulate_rule, audit_dashboard_stats, sla_stats, ExternalSystemViewSet, IngestedSignalViewSet, ingest_external_data, ReferenceListViewSet, ReferenceItemViewSet, auto_cluster_alerts, register_user, login_user, agent_investigation, executive_summary, RiskAgentLogViewSet, trigger_agent_run, AIGovernanceViewSet, AuditRuleViewSet, WebhookEventViewSet, ExternalActionTemplateViewSet, ExternalActionExecutionViewSet
 from .excel_views import excel_preview, excel_import, excel_analyze, excel_reconcile, excel_export, excel_assistant, excel_assistant_apply
+from .copilot_views import copilot_chat, copilot_briefing
 
 router = DefaultRouter()
 router.register(r'governance', AIGovernanceViewSet, basename='governance')
@@ -70,4 +71,8 @@ urlpatterns = [
     path('excel/export', excel_export, name='excel_export'),
     path('excel/assistant', excel_assistant, name='excel_assistant'),
     path('excel/assistant/apply', excel_assistant_apply, name='excel_assistant_apply'),
+
+    # Copiloto Global — assistente agéntico em toda a plataforma
+    path('ai/copilot', copilot_chat, name='copilot_chat'),
+    path('ai/copilot/briefing', copilot_briefing, name='copilot_briefing'),
 ]
