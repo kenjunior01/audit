@@ -1779,3 +1779,77 @@ def feedback_stats() -> dict:
     return {"total": total, "avg_rating": round(avg, 2),
             "distribution": distribution, "by_mode": by_mode,
             "by_page": by_page, "recent_low": recent_low}
+
+
+# ---------------------------------------------------------------------------
+# 8. DIGEST PROGRAMADO (cron push)
+# ---------------------------------------------------------------------------
+
+def build_digest(period: str = "daily") -> dict:
+    """Digest programado do Copiloto Global — compõe, num único payload,
+    o briefing executivo + sinais proativos + qualidade do suporte.
+    Destina-se a geração agendada (celery beat / cron via management
+    command) e envio por email: o gestor abre o dia com um retrato
+    completo da plataforma sem fazer uma única pergunta.
+    `period`: 'daily' | 'weekly'."""
+    briefing = build_briefing()
+    sig = build_proactive_signals()
+    fb = feedback_stats()
+
+    k = briefing.get("kpis", {})
+    signals = sig.get("signals", [])
+    critical = sum(1 for s in signals if s.get("level") == "critical")
+
+    parts = [f"{len(signals)} sinais ({critical} críticos)",
+             f"{k.get('open_alerts', 0)} alertas abertos",
+             f"{k.get('cases_overdue', 0)} casos fora do prazo"]
+    if fb.get("avg_rating") is not None:
+        parts.append(f"copiloto {fb['avg_rating']}/5")
+    headline = " · ".join(str(p) for p in parts)
+
+    return {
+        "period": period,
+        "headline": headline,
+        "narrative": briefing.get("briefing_md", ""),
+        "kpis": k,
+        "insights": briefing.get("insights", []),
+        "signals": signals,
+        "signals_count": len(signals),
+        "critical_count": critical,
+        "feedback": {"total": fb.get("total", 0),
+                     "avg_rating": fb.get("avg_rating"),
+                     "recent_low": (fb.get("recent_low") or [])[:3]},
+        "actions": briefing.get("actions", []),
+        "generated_at": timezone.now().isoformat(),
+    }
+
+
+def digest_email_body(digest: dict) -> str:
+    """Corpo de email em texto simples a partir do payload do digest."""
+    lines = [f"Resumo {digest.get('period', 'daily')} — Plataforma de Auditoria",
+             "=" * 52, "", digest.get("headline", ""), ""]
+    narr = (digest.get("narrative") or "").strip()
+    if narr:
+        lines += [narr, ""]
+    signals = digest.get("signals") or []
+    if signals:
+        lines.append("SINAIS QUE PRECISAM DE ATENÇÃO")
+        lines.append("-" * 30)
+        for s in signals:
+            flag = {"critical": "[CRÍTICO]", "warning": "[AVISO]"}.get(
+                s.get("level"), "[INFO]")
+            lines.append(f"{flag} {s.get('title', '')} — {s.get('detail', '')}")
+            act = s.get("action") or {}
+            if act.get("href"):
+                lines.append(f"        Ação: {act.get('label', '')} ({act['href']})")
+        lines.append("")
+    fb = digest.get("feedback") or {}
+    if fb.get("avg_rating") is not None:
+        lines.append(f"QUALIDADE DO COPILOTO: {fb['avg_rating']}/5 "
+                     f"({fb.get('total', 0)} avaliações)")
+        for low in fb.get("recent_low") or []:
+            lines.append(f"  · ({low.get('rating')}/5) {low.get('question', '')}")
+        lines.append("")
+    lines.append("Gerado automaticamente pelo Copiloto Global em "
+                 f"{digest.get('generated_at', '')}")
+    return "\n".join(lines)

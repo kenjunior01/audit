@@ -9,6 +9,7 @@ import ContextRiskChart from '@/components/dashboard/ContextRiskChart'
 import AIExecutiveSummary from '@/components/dashboard/AIExecutiveSummary'
 import AIGovernanceDashboard from '@/components/dashboard/AIGovernanceDashboard'
 import CopilotBriefingCard from '@/components/dashboard/CopilotBriefingCard'
+import CopilotDigestCard from '@/components/dashboard/CopilotDigestCard'
 
 type Stats = {
   total_transactions: number
@@ -113,6 +114,8 @@ export default function DashboardPage() {
       </div>
 
       <CopilotBriefingCard />
+
+      <CopilotDigestCard />
       
       {contextSummary && (
         <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 flex flex-wrap items-center gap-4 text-sm text-indigo-900">

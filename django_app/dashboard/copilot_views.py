@@ -156,3 +156,56 @@ def copilot_feedback_stats(request):
                                   "métricas de qualidade do copiloto."},
                         status=status.HTTP_403_FORBIDDEN)
     return Response(cs.feedback_stats())
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def copilot_digest(request):
+    """Digest programado do Copiloto Global (push por cron/beat).
+
+    GET  → digest mais recente (qualquer utilizador autenticado);
+           filtro opcional ?period=daily|weekly. Sem digests devolve
+           {"digest": null} (o frontend mostra estado vazio).
+    POST → gera agora (apenas admin): body opcional {period, email}.
+           Reutiliza a task send_copilot_digest (dedupe por period+dia,
+           email best-effort, log de auditoria)."""
+    from .models import CopilotDigest
+    from .tasks import send_copilot_digest
+
+    if request.method == "GET":
+        period = str(request.query_params.get("period") or "")[:10]
+        qs = CopilotDigest.objects.all()
+        if period in ("daily", "weekly"):
+            qs = qs.filter(period=period)
+        row = qs.first()
+        if not row:
+            return Response({"digest": None})
+        return Response({"digest": {
+            "id": row.id, "period": row.period, "day": str(row.day),
+            "status": row.status, "recipients": row.recipients,
+            "signals_count": row.signals_count,
+            "critical_count": row.critical_count,
+            "avg_rating": row.avg_rating,
+            "created_at": row.created_at.isoformat(),
+            "payload": row.payload,
+        }})
+
+    # POST — apenas administradores
+    auth = getattr(request, "auth", None)
+    role = (auth.get("role") if isinstance(auth, dict)
+            else getattr(auth, "role", None))
+    if role != "admin":
+        return Response({"error": "Apenas administradores podem gerar o "
+                                  "digest."},
+                        status=status.HTTP_403_FORBIDDEN)
+    period = str(request.data.get("period") or "daily")
+    if period not in ("daily", "weekly"):
+        return Response({"error": "period deve ser 'daily' ou 'weekly'."},
+                        status=status.HTTP_400_BAD_REQUEST)
+    send_email = bool(request.data.get("email", False))
+    result = send_copilot_digest(period=period, send_email=send_email)
+    if not result.get("ok"):
+        return Response({"error": result.get("message",
+                                             "Digest falhou.")},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    return Response(result)

@@ -548,3 +548,35 @@ class CopilotFeedback(models.Model):
 
     def __str__(self):
         return f"Feedback {self.rating}/5 ({self.page or '—'})"
+
+
+class CopilotDigest(models.Model):
+    """Digest programado do Copiloto Global (push proativo por cron/beat).
+    Guarda um snapshot diário/semanal composto por briefing executivo +
+    sinais proativos + qualidade do suporte, com registo do envio de email.
+    Um digest por (período, dia) — corridas repetidas atualizam o mesmo
+    registo em vez de duplicar."""
+    id = models.AutoField(primary_key=True)
+    period = models.CharField(max_length=10, default="daily")  # daily|weekly
+    day = models.DateField()  # dia de referência (chave de dedupe c/ period)
+    payload = models.JSONField(default=dict)  # build_digest() completo
+    signals_count = models.IntegerField(default=0)
+    critical_count = models.IntegerField(default=0)
+    avg_rating = models.FloatField(null=True, blank=True)
+    recipients = models.TextField(blank=True)  # emails para onde foi enviado
+    status = models.CharField(max_length=12, default="stored")  # stored|sent|failed
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(fields=['period', 'day'],
+                                    name='dashboard_digest_period_day_uq'),
+        ]
+        indexes = [
+            models.Index(fields=['created_at'], name='dashboard_cpd_created_idx'),
+        ]
+
+    def __str__(self):
+        return f"Digest {self.period} {self.day} ({self.status})"

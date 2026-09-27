@@ -4,6 +4,9 @@ from django.utils import timezone
 from .models import ImmutableAuditLog, WebhookEvent, ExternalSystem
 import requests
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 @shared_task
 def send_audit_email_task(subject, message, recipients, resource_id=None):
@@ -136,3 +139,75 @@ def ingest_from_system(system_id):
         return f"System {system_id} not found"
     except Exception as e:
         return f"Failed to ingest from system {system_id}: {str(e)}"
+
+
+# ---------------------------------------------------------------------------
+# Digest programado do Copiloto Global (cron push)
+# ---------------------------------------------------------------------------
+
+@shared_task
+def send_copilot_digest(period="daily", send_email=True):
+    """Gera o digest programado (briefing + sinais proativos + qualidade do
+    copiloto), persiste um registo por (periodo, dia) e envia por email aos
+    destinatários AUDIT_DIGEST_EMAILS (best-effort — o email nunca derruba
+    o digest; com o backend console apenas regista no log do servidor).
+    Pode ser invocado por celery beat (AUDIT_DIGEST_ENABLED=true), pelo
+    management command `manage.py copilot_digest` (cron clássico) ou
+    manualmente via POST /ai/copilot/digest (admin)."""
+    from django.conf import settings as dj_settings
+    from . import copilot_service as cs
+    from .models import CopilotDigest
+
+    period = period if period in ("daily", "weekly") else "daily"
+    try:
+        digest = cs.build_digest(period)
+    except Exception as e:
+        logger.warning("digest build falhou: %s", e)
+        return {"ok": False, "message": f"Digest falhou: {e}"}
+
+    recipients = list(getattr(dj_settings, "AUDIT_DIGEST_EMAILS", []) or [])
+    status = "stored"
+    if send_email and recipients:
+        try:
+            send_mail(
+                f"[Audit] Resumo {period} — {digest['headline'][:80]}",
+                cs.digest_email_body(digest),
+                dj_settings.DEFAULT_FROM_EMAIL,
+                recipients,
+                fail_silently=False,
+            )
+            status = "sent"
+        except Exception as e:
+            logger.warning("digest email falhou: %s", e)
+            status = "failed"
+
+    row, _created = CopilotDigest.objects.update_or_create(
+        period=period, day=timezone.localdate(),
+        defaults={
+            "payload": digest,
+            "signals_count": digest.get("signals_count", 0),
+            "critical_count": digest.get("critical_count", 0),
+            "avg_rating": digest.get("feedback", {}).get("avg_rating"),
+            "recipients": ", ".join(recipients) if status == "sent" else "",
+            "status": status,
+        })
+
+    try:
+        ImmutableAuditLog.objects.create(
+            actor_id="System_Copilot_Digest",
+            action_type=f"DIGEST_{status.upper()}",
+            resource_id=str(row.id),
+            details={"period": period, "signals": digest.get("signals_count", 0),
+                     "critical": digest.get("critical_count", 0),
+                     "recipients": recipients if status == "sent" else []},
+        )
+    except Exception as e:
+        logger.warning("digest audit log falhou: %s", e)
+
+    verb = {"sent": "enviado para", "stored": "armazenado (sem email — "
+            "configure AUDIT_DIGEST_EMAILS)", "failed": "gerado mas o envio "
+            "de email falhou"}[status]
+    return {"ok": status != "failed", "status": status, "id": row.id,
+            "digest": digest,
+            "message": f"Digest {period} {verb} "
+                       f"{len(recipients) if status == 'sent' else 0} destinatário(s)"}

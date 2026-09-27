@@ -147,3 +147,22 @@ if not DEBUG and os.environ.get('AUDIT_DJANGO_SECRET_KEY'):
 # Limite de upload (Excel Studio: 25 MB)
 DATA_UPLOAD_MAX_MEMORY_SIZE = 25 * 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 25 * 1024 * 1024
+
+# --- Digest programado do Copiloto Global (cron push) ----------------------
+# Destinatários do resumo automático (separados por vírgula). Vazio = apenas
+# persiste o digest (visível no frontend), sem envio de email.
+AUDIT_DIGEST_EMAILS = [e.strip() for e in os.environ.get(
+    "AUDIT_DIGEST_EMAILS", "").split(",") if e.strip()]
+# Agendamento via celery beat (requer worker + beat a correr):
+AUDIT_DIGEST_ENABLED = os.environ.get("AUDIT_DIGEST_ENABLED", "False").lower() in ("1", "true", "yes", "on")
+AUDIT_DIGEST_HOUR = int(os.environ.get("AUDIT_DIGEST_HOUR", 7))
+DEFAULT_FROM_EMAIL = os.environ.get("AUDIT_DEFAULT_FROM_EMAIL", "copiloto@audit-platform")
+if AUDIT_DIGEST_ENABLED:
+    from celery.schedules import crontab
+    CELERY_BEAT_SCHEDULE = {
+        "copilot-daily-digest": {
+            "task": "dashboard.tasks.send_copilot_digest",
+            "schedule": crontab(hour=AUDIT_DIGEST_HOUR, minute=0),
+            "args": ("daily",),
+        },
+    }
