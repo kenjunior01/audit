@@ -3,9 +3,10 @@ import { useState } from 'react'
 import { apiFetch, apiDownload } from '@/lib/api'
 import { useRequireToken } from '@/lib/auth'
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import AssistantTab from './assistant-tab'
 import {
   FileSpreadsheet, Upload, Search, GitCompareArrows, Download,
-  CheckCircle2, AlertTriangle, Info, Loader2, BarChart3, Copy,
+  CheckCircle2, AlertTriangle, Info, Loader2, BarChart3, Copy, Sparkles,
 } from 'lucide-react'
 
 type Mapping = Record<string, string>
@@ -33,6 +34,7 @@ const FIELD_LABELS: Record<string, string> = {
 }
 
 const TABS = [
+  { id: 'assistant', label: 'Copiloto IA', icon: Sparkles },
   { id: 'import', label: 'Importar', icon: Upload },
   { id: 'analyze', label: 'Análises', icon: Search },
   { id: 'reconcile', label: 'Reconciliação', icon: GitCompareArrows },
@@ -41,7 +43,7 @@ const TABS = [
 
 export default function ExcelStudioPage() {
   useRequireToken()
-  const [tab, setTab] = useState('import')
+  const [tab, setTab] = useState('assistant')
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
@@ -52,7 +54,7 @@ export default function ExcelStudioPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Excel Studio</h1>
           <p className="text-sm text-slate-400">
-            Super auxílio de documentos: importação inteligente, análises de auditor e reconciliação
+            Pergunte ao Copiloto IA, importe com mapeamento automático, analise, reconcilie e apresente
           </p>
         </div>
       </div>
@@ -69,6 +71,7 @@ export default function ExcelStudioPage() {
         })}
       </div>
 
+      {tab === 'assistant' && <AssistantTab />}
       {tab === 'import' && <ImportTab />}
       {tab === 'analyze' && <AnalyzeTab />}
       {tab === 'reconcile' && <ReconcileTab />}

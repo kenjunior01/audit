@@ -24,6 +24,7 @@ from rest_framework.response import Response
 from .auth import IsAuditorOrAdmin, IsViewerOrAbove
 from .models import Transaction, Alert, AuditCase, ExcelImportJob
 from . import excel_service as es
+from . import excel_ai_service as ai
 
 logger = logging.getLogger(__name__)
 
@@ -467,3 +468,92 @@ def excel_export(request):
     except Exception as e:
         logger.exception("excel_export failed")
         return Response({"error": f"Erro no export: {e}"}, status=500)
+
+
+# ---------------------------------------------------------------------------
+# 6) COPILOTO IA — assistente NL→Excel (pergunte ao ficheiro)
+# ---------------------------------------------------------------------------
+
+@api_view(["POST"])
+@permission_classes([IsAuditorOrAdmin])
+@parser_classes([MultiPartParser])
+def excel_assistant(request):
+    """
+    Copiloto conversacional: file (+sheet/+mapping) + question →
+    resposta com operações aplicadas, preview, fórmulas PT/EN e followups.
+    history: JSON string [{role, content}] das últimas mensagens (opcional).
+    """
+    question = (request.data.get("question") or "").strip()
+    if not question:
+        return Response({"error": "Envie a pergunta no campo 'question'."}, status=400)
+    if len(question) > 2000:
+        return Response({"error": "Pergunta demasiado longa (máx. 2000 caracteres)."}, status=400)
+
+    try:
+        history = json.loads(request.data.get("history") or "[]")
+        if not isinstance(history, list):
+            history = []
+    except json.JSONDecodeError:
+        history = []
+
+    try:
+        use_db = str(request.data.get("use_db", "")).lower() in ("1", "true", "yes")
+        if use_db:
+            df = _transactions_dataframe(days=int(request.data.get("days", 365) or 365))
+            if df.empty:
+                return Response({"error": "Sem transações na base para o período escolhido."}, status=404)
+            result = ai._chat_core(df, "(base de dados)", {}, question, history)
+            result["source"] = {"type": "database"}
+        else:
+            files = _read_files(request, "file")
+            if not files:
+                return Response({"error": "Envie o ficheiro no campo 'file' (ou use use_db=1)."}, status=400)
+            name, content = files[0]
+            result = ai.chat(content, name, question,
+                             sheet=request.data.get("sheet"),
+                             mapping_json=request.data.get("mapping"),
+                             history=history)
+            result["source"] = {"type": "file", "name": name}
+        return Response(result)
+    except ValueError as e:
+        return Response({"error": str(e)}, status=400)
+    except Exception as e:
+        logger.exception("excel_assistant failed")
+        return Response({"error": f"Erro no Copiloto: {e}"}, status=500)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuditorOrAdmin])
+@parser_classes([MultiPartParser])
+def excel_assistant_apply(request):
+    """
+    Aplica o plano confirmado do Copiloto e devolve o workbook .xlsx com
+    Tabela 'tblDados', KPIs vivos e folha de Fórmulas.
+    Body (multipart): file, plan (JSON list de operações), sheet, mapping.
+    """
+    try:
+        files = _read_files(request, "file")
+        if not files:
+            return Response({"error": "Envie o ficheiro no campo 'file'."}, status=400)
+        name, content = files[0]
+        try:
+            plan = json.loads(request.data.get("plan") or "[]")
+        except json.JSONDecodeError:
+            return Response({"error": "Campo 'plan' deve ser JSON (lista de operações)."}, status=400)
+        if not isinstance(plan, list):
+            return Response({"error": "Campo 'plan' deve ser uma lista de operações."}, status=400)
+
+        wb_bytes, fname = ai.apply_and_build(
+            content, name, plan,
+            sheet=request.data.get("sheet"),
+            mapping_json=request.data.get("mapping"),
+            title=request.data.get("title") or None)
+        return HttpResponse(
+            wb_bytes,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+    except ValueError as e:
+        return Response({"error": str(e)}, status=400)
+    except Exception as e:
+        logger.exception("excel_assistant_apply failed")
+        return Response({"error": f"Erro ao gerar o workbook: {e}"}, status=500)
