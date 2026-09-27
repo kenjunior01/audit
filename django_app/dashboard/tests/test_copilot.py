@@ -60,6 +60,28 @@ class RouterTest(TestCase):
         self.assertEqual(cs.detect_tools("open cases overdue")[0], "cases")
         self.assertEqual(cs.detect_tools("platform overview")[0], "overview")
 
+    def test_detect_tools_help_explain_trends(self):
+        # meta-suporte
+        self.assertEqual(cs.detect_tools("o que sabes fazer?")[0], "help")
+        self.assertEqual(cs.detect_tools("preciso de ajuda")[0], "help")
+        self.assertEqual(cs.detect_tools("what can you do")[0], "help")
+        # explicabilidade
+        self.assertEqual(cs.detect_tools("explica o alerta 42")[0], "explain")
+        self.assertEqual(cs.detect_tools("porque foi gerado este alerta")[0],
+                         "explain")
+        # tendências
+        self.assertEqual(cs.detect_tools("compara esta semana com a semana "
+                                         "passada")[0], "trends")
+        self.assertEqual(cs.detect_tools("evolução dos alertas")[0], "trends")
+
+    def test_page_hint_vague_question(self):
+        # pergunta vaga + página → dica da página
+        self.assertEqual(cs.detect_tools("e agora?", page="/sla"), ["sla"])
+        self.assertEqual(cs.detect_tools("e agora?", page="/cases"), ["cases"])
+        # pergunta explícita sobrepõe-se à página
+        self.assertEqual(cs.detect_tools("resumo da plataforma",
+                                         page="/sla"), ["overview"])
+
     def test_multi_intent(self):
         tools = cs.detect_tools("resumo dos alertas críticos e casos em atraso")
         self.assertIn("overview", tools)
@@ -83,6 +105,28 @@ class RouterTest(TestCase):
         self.assertEqual(f["alert_status"], "False Positive")
         f2 = cs.extract_filters("casos em progresso")
         self.assertEqual(f2["case_status"], "In Progress")
+
+    def test_extract_filters_ids(self):
+        f = cs.extract_filters("explica o alerta 42")
+        self.assertEqual(f["alert_id"], 42)
+        f2 = cs.extract_filters("detalha o caso 7")
+        self.assertEqual(f2["case_id"], 7)
+        f3 = cs.extract_filters("alert #1234 porque")
+        self.assertEqual(f3["alert_id"], 1234)
+        # sem IDs
+        f4 = cs.extract_filters("resumo da plataforma")
+        self.assertIsNone(f4["alert_id"])
+        self.assertIsNone(f4["case_id"])
+
+    def test_extract_filters_latest(self):
+        f = cs.extract_filters("explica o alerta mais recente")
+        self.assertTrue(f["latest_alert"])
+        f2 = cs.extract_filters("explica o caso mais recente")
+        self.assertTrue(f2["latest_case"])
+        # ID explícito tem prioridade sobre «mais recente»
+        f3 = cs.extract_filters("explica o alerta 42 mais recente")
+        self.assertEqual(f3["alert_id"], 42)
+        self.assertFalse(f3["latest_alert"])
 
 
 class ToolsTest(TestCase):
@@ -195,6 +239,151 @@ class ChatOrchestratorTest(TestCase):
         r = cs.chat("alertas críticos")
         self.assertIsInstance(r["latency_ms"], int)
 
+    def test_chat_page_context(self):
+        # pergunta vaga na página de SLA → responde sobre SLA
+        r = cs.chat("e agora?", page="/sla")
+        self.assertIn("sla", r["tools_used"])
+        self.assertIn("SLA", r["answer"])
+        # sem página → fallback overview
+        r2 = cs.chat("e agora?")
+        self.assertIn("overview", r2["tools_used"])
+
+    def test_chat_help_and_explain_flow(self):
+        r = cs.chat("o que sabes fazer?")
+        self.assertIn("help", r["tools_used"])
+        self.assertIn("Copiloto", r["answer"])
+        r2 = cs.chat("explica o alerta mais recente")
+        self.assertIn("explain", r2["tools_used"])
+        self.assertIn("Alerta #", r2["answer"])
+
+
+class ExplicabilidadeTest(TestCase):
+    """tool_explain — o coração do suporte de classe mundial."""
+
+    def _alert_with_tx(self):
+        tx = _tx("TX-EXP-1", "Gamma", 30000.0, days_ago=0, status="Approved")
+        tx.xai_explanation = {"reasons": ["valor 4x acima da média",
+                                          "fornecedor novo"]}
+        tx.save(update_fields=["xai_explanation"])
+        alert = Alert.objects.create(
+            vendor="Gamma", amount=30000.0, severity="Critical",
+            status="New", materiality=0.9,
+            timestamp=timezone.now(), alert_type="Threshold",
+            description="valor fora do padrão", transaction=tx)
+        return alert, tx
+
+    def test_explain_alert_by_id(self):
+        alert, tx = self._alert_with_tx()
+        r = cs.tool_explain({"alert_id": alert.id})
+        self.assertEqual(r["meta"]["alert_id"], alert.id)
+        self.assertIn("TX-EXP-1", r["summary"])
+        self.assertIn("Critical", r["summary"])
+        # fatores de risco XAI aparecem
+        self.assertIn("4x acima da média", r["summary"])
+        # próximos passos recomendados
+        self.assertTrue(any("Próximos passos" in i["title"]
+                            for i in r["insights"]))
+        # tabela da transação associada
+        self.assertEqual(r["table"]["rows"][0][0], "TX-EXP-1")
+
+    def test_explain_latest_alert(self):
+        alert, _ = self._alert_with_tx()
+        r = cs.tool_explain({"latest_alert": True})
+        self.assertEqual(r["meta"]["alert_id"], alert.id)
+
+    def test_explain_alert_not_found(self):
+        r = cs.tool_explain({"alert_id": 987654})
+        self.assertFalse(r["meta"]["found"])
+        self.assertIn("Não encontrei", r["summary"])
+
+    def test_explain_without_id_is_guidance(self):
+        r = cs.tool_explain({})
+        self.assertIn("explica", r["summary"])
+        self.assertEqual(r["insights"], [])
+
+    def test_explain_case_overdue(self):
+        case = _case("Auditoria Gamma", status="In Progress",
+                     priority="High", deadline_days=-3)
+        r = cs.tool_explain({"case_id": case.id})
+        self.assertEqual(r["meta"]["case_id"], case.id)
+        self.assertIn("FORA DO PRAZO", r["summary"])
+        self.assertTrue(any(i["tone"] == "danger" for i in r["insights"]))
+        # sem responsável atribuído → insight warn
+        self.assertTrue(any("responsável" in i["title"].lower()
+                            for i in r["insights"]))
+
+    def test_explain_case_not_found(self):
+        r = cs.tool_explain({"case_id": 987654})
+        self.assertFalse(r["meta"]["found"])
+
+    def test_explain_vendor_pattern_insight(self):
+        # 4 alertas do mesmo fornecedor → insight de padrão recorrente
+        self._alert_with_tx()
+        Alert.objects.create(vendor="Gamma", amount=100.0,
+                             severity="High", status="New",
+                             materiality=0.5, timestamp=timezone.now(),
+                             alert_type="Threshold", description="x")
+        Alert.objects.create(vendor="Gamma", amount=200.0,
+                             severity="High", status="New",
+                             materiality=0.5, timestamp=timezone.now(),
+                             alert_type="Threshold", description="x")
+        Alert.objects.create(vendor="Gamma", amount=300.0,
+                             severity="Medium", status="New",
+                             materiality=0.5, timestamp=timezone.now(),
+                             alert_type="Threshold", description="x")
+        r = cs.tool_explain({"latest_alert": True})
+        self.assertTrue(any("Padrão recorrente" in i["title"]
+                            for i in r["insights"]))
+
+
+class TrendsTest(TestCase):
+    def setUp(self):
+        # Alert.timestamp é auto_now_add → criamos e retrodatamos via
+        # queryset.update() (que contorna o auto_now_add) para simular
+        # distribuição temporal real entre as duas semanas.
+        def _backdated_alert(vendor, amount, days_ago, **kw):
+            a = _alert(vendor, amount, **kw)
+            Alert.objects.filter(id=a.id).update(
+                timestamp=timezone.now() - timedelta(days=days_ago))
+            return a
+
+        # semana atual: 5 alertas / 3 transações; semana passada: 2 / 1
+        for i in range(5):
+            _backdated_alert(f"V{i}", 100.0 + i, days_ago=i)
+        for i in range(2):
+            _backdated_alert("Old", 50.0, days_ago=8 + i)
+        _tx("TX-A", "Alpha", 1000.0, days_ago=1)
+        _tx("TX-B", "Beta", 2000.0, days_ago=2)
+        _tx("TX-C", "Alpha", 3000.0, days_ago=3)
+        _tx("TX-D", "Old", 500.0, days_ago=10)
+
+    def test_tool_trends_counts(self):
+        r = cs.tool_trends({})
+        self.assertEqual(r["meta"]["alerts_this"], 5)
+        self.assertEqual(r["meta"]["alerts_prev"], 2)
+        self.assertEqual(r["meta"]["tx_this"], 3)
+        self.assertEqual(r["meta"]["tx_prev"], 1)
+        # série diária com 14 linhas
+        self.assertEqual(r["table"]["total"], 14)
+
+    def test_tool_trends_acceleration_insight(self):
+        r = cs.tool_trends({})
+        # 5 vs 2 = +150% → insight de aceleração
+        self.assertTrue(any("aceleração" in i["title"].lower()
+                            for i in r["insights"]))
+        self.assertIn("+", r["summary"])  # delta positivo visível
+
+    def test_tool_trends_quiet_week(self):
+        # inverte: poucos alertas agora, muitos antes
+        Alert.objects.all().delete()
+        for i in range(6):
+            a = _alert("P", 10.0, days_ago=8 + i)
+            Alert.objects.filter(id=a.id).update(
+                timestamp=timezone.now() - timedelta(days=8 + i))
+        r = cs.tool_trends({})
+        self.assertTrue(any("queda" in i["title"].lower()
+                            for i in r["insights"]))
+
 
 class CopilotRESTTest(TestCase):
     def setUp(self):
@@ -217,6 +406,22 @@ class CopilotRESTTest(TestCase):
         self.assertIn("tools_used", data)
         self.assertIn("actions", data)
         self.assertIn("followups", data)
+
+    def test_chat_endpoint_with_page_context(self):
+        resp = self.client.post("/django/api/ai/copilot",
+                                {"question": "e agora?", "page": "/sla"},
+                                format="json")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("sla", resp.json()["tools_used"])
+
+    def test_chat_endpoint_help(self):
+        resp = self.client.post("/django/api/ai/copilot",
+                                {"question": "o que sabes fazer?"},
+                                format="json")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("help", data["tools_used"])
+        self.assertIn("Copiloto", data["answer"])
 
     def test_chat_endpoint_requires_question(self):
         resp = self.client.post("/django/api/ai/copilot", {}, format="json")

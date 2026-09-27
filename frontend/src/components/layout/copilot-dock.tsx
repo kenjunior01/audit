@@ -39,10 +39,10 @@ type Message = { role: 'user' | 'assistant'; content: string; data?: CopilotResp
 /* ------------------- prompts contextuais por rota ------------------- */
 const PAGE_PROMPTS: Record<string, string[]> = {
   '/': ['Resumo da plataforma', 'Previsão de risco para os próximos dias'],
-  '/alerts': ['Alertas críticos de hoje', 'Alertas falsos positivos', 'Alertas dos últimos 7 dias'],
-  '/transactions': ['Top 10 transações por valor', 'Transações maior que 10.000'],
-  '/cases': ['Casos fora do prazo', 'Casos críticos abertos'],
-  '/sla': ['Casos fora do prazo', 'Alertas sem primeira resposta'],
+  '/alerts': ['Alertas críticos de hoje', 'Explica o alerta mais recente', 'Alertas falsos positivos'],
+  '/transactions': ['Top 10 transações por valor', 'Transações maior que 10.000', 'Compara esta semana com a semana passada'],
+  '/cases': ['Casos fora do prazo', 'Explica o caso mais recente', 'Casos críticos abertos'],
+  '/sla': ['Casos fora do prazo', 'Alertas sem primeira resposta', 'E agora?'],
   '/agents': ['Como estão os agentes?', 'Previsão de risco'],
   '/excel': ['Importações de Excel recentes', 'Que análises o Excel Studio faz?'],
   '/governance': ['Resumo da plataforma', 'Como estão os agentes?'],
@@ -54,8 +54,9 @@ const PAGE_PROMPTS: Record<string, string[]> = {
   '/external-actions': ['Como estão os agentes?', 'Casos críticos'],
   '/settings': ['Importações de Excel recentes', 'Resumo da plataforma'],
 }
-const DEFAULT_PROMPTS = ['Resumo da plataforma', 'Alertas críticos de hoje',
-  'Casos fora do prazo', 'Deteta duplicados na base de dados']
+const DEFAULT_PROMPTS = ['O que sabes fazer?', 'Resumo da plataforma',
+  'Alertas críticos de hoje', 'Explica o alerta mais recente',
+  'Casos fora do prazo']
 
 const TONE_STYLE: Record<string, { icon: typeof Info; cls: string }> = {
   info: { icon: Info, cls: 'bg-sky-950/60 border-sky-800 text-sky-300' },
@@ -65,15 +66,34 @@ const TONE_STYLE: Record<string, { icon: typeof Info; cls: string }> = {
 }
 
 /* --------------------------- componente --------------------------- */
+const CHAT_STORAGE_KEY = 'copilot-chat-v1'
+
+function loadStoredMessages(): Message[] {
+  // restaura a conversa entre navegações e refresh (por sessão do browser)
+  try {
+    if (typeof window === 'undefined') return []
+    const raw = sessionStorage.getItem(CHAT_STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed.slice(-40) : []
+  } catch { return [] }
+}
+
 export function CopilotDock() {
   const router = useRouter()
   const pathname = usePathname()
   const [open, setOpen] = useState(false)
-  const [messages, setMessages] = useState<Message[]>([])
+  const [messages, setMessages] = useState<Message[]>(loadStoredMessages)
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  // persiste a conversa (sessionStorage — sobrevive a navegação e refresh)
+  useEffect(() => {
+    try { sessionStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(messages.slice(-40))) }
+    catch { /* quota/privacidade — ignora */ }
+  }, [messages])
 
   // páginas públicas sem copiloto
   const bare = pathname && ['/login', '/register', '/onboarding'].some(p => pathname.startsWith(p))
@@ -90,7 +110,7 @@ export function CopilotDock() {
       const r = await apiFetch('/ai/copilot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: q, history }),
+        body: JSON.stringify({ question: q, history, page: pathname }),
       })
       const data = await r.json()
       if (!r.ok) throw new Error(data.error || `Erro ${r.status}`)
@@ -176,7 +196,7 @@ export function CopilotDock() {
               <Sparkles className="w-5 h-5 text-blue-400" />
               <div className="flex-1">
                 <p className="text-sm font-semibold text-white">Copiloto Global</p>
-                <p className="text-[11px] text-slate-400">Dados vivos · toda a plataforma</p>
+                <p className="text-[11px] text-slate-400">Dados vivos · toda a plataforma · com contexto da página</p>
               </div>
               <button onClick={loadBriefing} disabled={loading}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-600/80 hover:bg-indigo-500 text-white text-xs disabled:opacity-50"
@@ -201,6 +221,7 @@ export function CopilotDock() {
                   <p className="text-xs text-slate-500 mt-1 px-4">
                     Alertas, transações, casos, agentes IA, SLA, Benford, duplicados,
                     previsões — respondo com números reais e levo-o onde precisa.
+                    Pergunte também «explica o alerta 42» para análise de causa.
                   </p>
                 </div>
               )}

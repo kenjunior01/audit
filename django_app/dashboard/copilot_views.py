@@ -35,8 +35,10 @@ def copilot_chat(request):
         if isinstance(m, dict) and m.get("role") in ("user", "assistant"):
             clean_history.append({"role": m["role"],
                                   "content": str(m.get("content", ""))[:400]})
+    # página atual do frontend (consciência de contexto do copiloto)
+    page = str(request.data.get("page") or "")[:60]
     try:
-        result = cs.chat(question, clean_history)
+        result = cs.chat(question, clean_history, page=page)
     except Exception as e:
         logger.exception("copilot_chat falhou")
         return Response({"error": f"O Copiloto não conseguiu responder: {e}"},

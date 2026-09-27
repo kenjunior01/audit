@@ -90,6 +90,17 @@ def norm_q(text: str) -> str:
 
 _TOOL_KEYWORDS = [
     # (tool, regex sobre texto normalizado sem acentos)
+    # help primeiro — meta-perguntas ganham prioridade sobre tudo
+    ("help", r"\bajuda\b|\bhelp\b|o que (sabes|podes|consegues|e que sabes|e que podes) fazer|"
+             r"como funciona (isso|o copiloto|a plataforma|este copiloto)|"
+             r"quais (as|sua) (capacidades|funcionalidades)|capacidades do copiloto|"
+             r"what can you do|como te uso|como utilizar o copiloto"),
+    ("explain", r"(explica|explain|porque|por que|why|o que motivou|detalha|detalhe|analisa o alerta|"
+                r"analisa o caso|motivo do|razao do)[^.?!]*\b(alerta|alert|caso|case)\b|"
+                r"\b(alerta|caso)\s*#?\s*\d+|\balert\s*#?\s*\d+"),
+    ("trends", r"tendance?ria semanal|compara|comparar|evolucao|evolu[cu]ao|semana passada|esta semana vs|"
+               r"week over week|crescimento|subiu|desceu|caiu|aumentou|diminuiu|ao longo do tempo|"
+               r"historico de alertas|historico de transacoes"),
     ("benford", r"benford|1[ºo] digito|primeiro digito|distribuicao dos digitos"),
     ("duplicates", r"duplicad|repetid|duplicate|duas vezes|mesmo valor"),
     ("forecast", r"previsao|prever|tendencia|forecast|proxim[oa]s dias|proxim[oa]s semanas|projecao|vai evoluir"),
@@ -102,12 +113,27 @@ _TOOL_KEYWORDS = [
     ("overview", r"resumo|overview|panorama|estado da plataforma|como esta a plataforma|como anda|situacao geral|kpi|metrica|taxa|volume"),
 ]
 
-_TOOL_ORDER = ["overview", "vendor", "forecast", "alerts", "transactions",
-               "cases", "sla", "agents", "excel", "benford", "duplicates"]
+_TOOL_ORDER = ["help", "explain", "overview", "vendor", "forecast", "trends",
+               "alerts", "transactions", "cases", "sla", "agents", "excel",
+               "benford", "duplicates"]
+
+# Página atual (rota frontend) → tool sugerida quando a pergunta é vaga.
+# Dá ao copiloto consciência de contexto: "e agora?" na página de SLA
+# responde sobre SLA, não sobre a plataforma em geral.
+PAGE_TOOL_HINT = {
+    "/": "overview", "/alerts": "alerts", "/transactions": "transactions",
+    "/cases": "cases", "/sla": "sla", "/agents": "agents", "/excel": "excel",
+    "/graph": "duplicates", "/governance": "overview", "/geo-risk": "overview",
+    "/automation": "agents", "/context": "overview", "/integrations": "excel",
+    "/external-actions": "agents", "/settings": "excel", "/rules": "agents",
+    "/signals": "alerts", "/wizard": "excel", "/upload": "excel",
+}
 
 
-def detect_tools(question: str) -> list:
-    """Deteção multi-intenção → lista ordenada de tools (máx. 4)."""
+def detect_tools(question: str, page: str = None) -> list:
+    """Deteção multi-intenção → lista ordenada de tools (máx. 4).
+    `page` = rota atual do frontend; usada como dica quando a pergunta
+    não contém palavras-chave reconhecidas."""
     q = norm_q(question)
     found = []
     for tool, pattern in _TOOL_KEYWORDS:
@@ -119,7 +145,8 @@ def detect_tools(question: str) -> list:
         if "vendor" not in found:
             found.append("vendor")
     if not found:
-        found = ["overview"]
+        hint = PAGE_TOOL_HINT.get((page or "/").rstrip("/") or "/")
+        found = [hint] if hint else ["overview"]
     found.sort(key=lambda t: _TOOL_ORDER.index(t) if t in _TOOL_ORDER else 99)
     return found[:MAX_TOOLS_PER_QUESTION]
 
@@ -177,7 +204,25 @@ def extract_filters(question: str) -> dict:
     f = {"severity": None, "alert_status": None, "case_status": None,
          "priority": None, "vendor": "", "category": "",
          "days": None, "top_n": None, "min_amount": None,
-         "max_amount": None, "overdue": False}
+         "max_amount": None, "overdue": False,
+         "alert_id": None, "case_id": None,
+         "latest_alert": False, "latest_case": False}
+
+    # IDs de alerta/caso — "explica o alerta 42", "alert #42", "caso 7"
+    m = re.search(r"\b(?:alerta|alert)\s*#?\s*(\d{1,7})\b", q)
+    if m:
+        f["alert_id"] = int(m.group(1))
+    m = re.search(r"\b(?:caso|case)\s*#?\s*(\d{1,7})\b", q)
+    if m:
+        f["case_id"] = int(m.group(1))
+    # "o alerta mais recente", "este alerta", "the latest alert"
+    if re.search(r"(alerta|alert)\b[^.?!]*\b(mais recente|recente|latest|last|ultimo|último|este|this)\b", q) \
+            or re.search(r"\b(este|this)\s+(alerta|alert|caso|case)\b", q):
+        if not f["alert_id"]:
+            f["latest_alert"] = True
+    if re.search(r"(caso|case)\b[^.?!]*\b(mais recente|recente|latest|last|ultimo|último)\b", q):
+        if not f["case_id"]:
+            f["latest_case"] = True
 
     for key, word in (("critic", "critical"), ("altíssim", "critical"),
                       ("alto", "high"), ("high", "high"), ("grave", "high"),
@@ -838,6 +883,326 @@ def tool_vendor_profile(f: dict) -> dict:
             "meta": {"vendor": vendor, "tx": n_tx, "alerts": n_alerts}}
 
 
+def tool_help(f: dict) -> dict:
+    """Meta-suporte: o copiloto explica as próprias capacidades.
+    Um modelo de suporte de classe mundial tem de saber apresentar-se."""
+    summary = (
+        "**Sou o Copiloto Global — conheço TODA a plataforma em tempo real.**\n"
+        "Pergunte em linguagem natural (PT ou EN); respondo com números "
+        "concretos e levo-o para onde precisa:\n"
+        "- **Panorama & KPIs** — «resumo da plataforma», «kpi de alertas»\n"
+        "- **Alertas** — «alertas críticos dos últimos 7 dias», "
+        "«alertas falsos positivos», «top alertas maior que 10.000»\n"
+        "- **Explicabilidade** — «explica o alerta 42», «porque foi gerado "
+        "o alerta mais recente», «detalha o caso 7»\n"
+        "- **Transações** — «top 10 transações por valor», "
+        "«transações maior que 5.000»\n"
+        "- **Casos & SLA** — «casos fora do prazo», «casos em progresso»\n"
+        "- **Agentes IA** — «como estão os agentes?»\n"
+        "- **Excel Studio** — «importações de excel», e no Excel Studio o "
+        "Copiloto IA transforma ficheiros e sugere fórmulas PT/EN\n"
+        "- **Forense** — «aplica a lei de benford», «deteta duplicados»\n"
+        "- **Previsões & tendências** — «previsão de risco», «compara esta "
+        "semana com a semana passada»\n"
+        "- **Fornecedores** — «perfil do fornecedor Acme»\n"
+        "- **Briefing executivo** — botão **Briefing** aqui no painel")
+    insights = [
+        {"title": "Consciência de contexto",
+         "detail": "Se estiver numa página (ex.: SLA) e fizer uma pergunta "
+                   "vaga como «e agora?», respondo sobre essa página.",
+         "tone": "info"},
+        {"title": "Ações navegáveis",
+         "detail": "Cada resposta traz botões que o levam diretamente à "
+                   "página certa — sem procurar menus.",
+         "tone": "success"},
+    ]
+    rows = [["Alertas", "severidade, estado, fornecedor, período, valor"],
+            ["Explicabilidade", "ID do alerta/caso ou «o mais recente»"],
+            ["Transações", "top N, valor mín/máx, categoria, período"],
+            ["Casos & SLA", "estado, prioridade, atrasos, prazos"],
+            ["Forense", "Benford, duplicados exatos e fuzzy"],
+            ["Previsões", "regressão 14 dias + projeção 3 dias"],
+            ["Tendências", "semana vs semana, evolução diária"],
+            ["Excel", "importações, Copiloto IA de fórmulas"]]
+    return {"tool": "help", "title": "Capacidades do Copiloto",
+            "summary": summary,
+            "table": _table(["Domínio", "Exemplos de perguntas"], rows, len(rows)),
+            "insights": insights,
+            "meta": {"capabilities": 10}}
+
+
+def tool_explain(f: dict) -> dict:
+    """Explicabilidade profunda: PORQUE é que este alerta/caso existe.
+    Junta o alerta + transação associada + regras/agentes compatíveis +
+    histórico do fornecedor + próximos passos recomendados."""
+    alert_id, case_id = f.get("alert_id"), f.get("case_id")
+    if not alert_id and f.get("latest_alert"):
+        latest = Alert.objects.order_by("-timestamp", "-id").first()
+        alert_id = latest.id if latest else None
+    if not case_id and f.get("latest_case"):
+        latest = AuditCase.objects.order_by("-created_at", "-id").first()
+        case_id = latest.id if latest else None
+
+    if alert_id:
+        alert = Alert.objects.filter(id=alert_id).first()
+        if not alert:
+            return {"tool": "explain", "title": f"Alerta #{alert_id}",
+                    "summary": f"Não encontrei o alerta #{alert_id}. "
+                               "Verifique o ID — por exemplo: «explica o "
+                               "alerta 42» ou «explica o alerta mais recente».",
+                    "insights": [], "meta": {"found": False}}
+        return _explain_alert(alert)
+    if case_id:
+        case = AuditCase.objects.filter(id=case_id).first()
+        if not case:
+            return {"tool": "explain", "title": f"Caso #{case_id}",
+                    "summary": f"Não encontrei o caso #{case_id}. "
+                               "Verifique o ID — por exemplo: «detalha o "
+                               "caso 7» ou «explica o caso mais recente».",
+                    "insights": [], "meta": {"found": False}}
+        return _explain_case(case)
+    return {"tool": "explain", "title": "Explicabilidade",
+            "summary": "Posso explicar a origem de qualquer alerta ou caso.\n"
+                       "- «explica o alerta 42»\n"
+                       "- «porque foi gerado o alerta mais recente»\n"
+                       "- «detalha o caso 7»",
+            "insights": [], "meta": {}}
+
+
+def _explain_alert(alert: Alert) -> dict:
+    now = timezone.now()
+    tx = alert.transaction
+    vendor_alerts = Alert.objects.filter(vendor=alert.vendor).exclude(id=alert.id)
+    n_vendor_alerts = vendor_alerts.count()
+    vendor_critical = vendor_alerts.filter(
+        severity__in=["Critical", "High"]).count()
+
+    linhas = [f"**Alerta #{alert.id} — {alert.alert_type}** "
+              f"({alert.severity}, {alert.status}, "
+              f"{timezone.localtime(alert.timestamp).strftime('%d/%m/%Y %H:%M')})"]
+    if alert.description:
+        linhas.append(f"- Descrição: {alert.description[:200]}")
+    if alert.amount is not None:
+        linhas.append(f"- Valor: {_fmt_money(alert.amount)} · "
+                      f"materialidade {(alert.materiality or 0) * 100:.0f}%")
+    if alert.vendor:
+        linhas.append(f"- Fornecedor: {alert.vendor}")
+    if tx:
+        linhas.append(f"- Transação associada: **{tx.transaction_id}** "
+                      f"({_fmt_money(tx.amount, tx.currency)}, "
+                      f"{tx.category or 'sem categoria'}, {tx.status}, "
+                      f"{timezone.localtime(tx.timestamp).strftime('%d/%m/%Y')})")
+        xai = tx.xai_explanation if isinstance(tx.xai_explanation, dict) else None
+        if xai:
+            reasons = xai.get("reasons") or xai.get("factors") or []
+            if isinstance(reasons, list) and reasons:
+                linhas.append("- Fatores de risco da transação: "
+                              + "; ".join(str(r)[:90] for r in reasons[:3]))
+    else:
+        linhas.append("- Sem transação associada (alerta gerado diretamente).")
+
+    # agentes cuja especialização/action se relaciona com o tipo de alerta
+    tipo_tokens = re.split(r"[\s_\-]+", strip_accents(alert.alert_type or "").lower())
+    ag_matches = [a for a in RiskAgent.objects.filter(active=True)
+                  if any(tok and tok in strip_accents(a.specialization).lower()
+                         or tok in strip_accents(a.name).lower()
+                         for tok in tipo_tokens)]
+    if ag_matches:
+        linhas.append("- Agentes ativos compatíveis: "
+                      + ", ".join(a.name for a in ag_matches[:3]))
+
+    steps = []
+    if alert.status in ("New", "Investigating"):
+        steps.append("Triar o alerta e registar a conclusão da análise")
+    if alert.severity in ("Critical", "High"):
+        steps.append("Criar caso de auditoria com prioridade " + alert.severity)
+    if vendor_critical:
+        steps.append(f"Avaliar padrão do fornecedor ({vendor_critical} "
+                     "alertas graves no histórico)")
+    if tx and tx.status == "Approved" and alert.severity == "Critical":
+        steps.append("Considerar suspensão temporária de pagamentos a este "
+                     "fornecedor enquanto investiga")
+
+    insights = []
+    if n_vendor_alerts >= 3:
+        insights.append({"title": f"Padrão recorrente: {alert.vendor}",
+                         "detail": f"{n_vendor_alerts} outros alertas para o "
+                                   "mesmo fornecedor — não é um episódio "
+                                   "isolado.", "tone": "danger"
+                         if vendor_critical else "warn"})
+    if (alert.materiality or 0) >= 0.8:
+        insights.append({"title": "Materialidade elevada",
+                         "detail": f"Impacto potencial de "
+                                   f"{(alert.materiality or 0) * 100:.0f}% — "
+                                   "priorize esta triagem.",
+                         "tone": "danger"})
+    if alert.status == "New":
+        age_days = (now - alert.timestamp).days
+        if age_days >= 2:
+            insights.append({"title": "Alerta envelhecido sem triagem",
+                             "detail": f"{age_days} dia(s) no estado «New» — "
+                                       "risco de violação de SLA.",
+                             "tone": "warn"})
+    if steps:
+        insights.append({"title": "Próximos passos recomendados",
+                         "detail": " · ".join(steps[:3]), "tone": "info"})
+
+    rows = []
+    if tx:
+        rows = [[tx.transaction_id, tx.vendor or "—",
+                 _fmt_money(tx.amount, tx.currency), tx.category or "—",
+                 tx.status,
+                 timezone.localtime(tx.timestamp).strftime("%d/%m/%Y")]]
+    return {"tool": "explain", "title": f"Porquê do alerta #{alert.id}",
+            "summary": "\n".join(linhas),
+            "table": _table(["Transação", "Fornecedor", "Valor", "Categoria",
+                             "Estado", "Data"], rows, len(rows)),
+            "insights": insights,
+            "meta": {"alert_id": alert.id, "vendor": alert.vendor or "",
+                     "vendor_alerts": n_vendor_alerts,
+                     "agents_matched": [a.name for a in ag_matches[:3]]}}
+
+
+def _explain_case(case: AuditCase) -> dict:
+    now = timezone.now()
+    linhas = [f"**Caso #{case.id} — {case.title}** "
+              f"({case.status}, prioridade {case.priority})"]
+    if case.description:
+        linhas.append(f"- Descrição: {case.description[:220]}")
+    if case.finding_type:
+        linhas.append(f"- Tipo de achado: {case.finding_type}")
+    linhas.append(f"- Criado por {case.created_by} em "
+                  f"{timezone.localtime(case.created_at).strftime('%d/%m/%Y')}"
+                  + (f" · atribuído a {case.assigned_to}"
+                     if case.assigned_to else " · sem responsável atribuído"))
+    if case.deadline:
+        delta = (case.deadline - now).days
+        prazo_txt = (f"FORA DO PRAZO há {-delta} dia(s)" if delta < 0
+                     else f"{delta} dia(s) restantes")
+        linhas.append(f"- Prazo: "
+                      f"{timezone.localtime(case.deadline).strftime('%d/%m/%Y')} "
+                      f"({prazo_txt})")
+    if case.inherent_risk is not None or case.residual_risk is not None:
+        linhas.append(f"- Risco inerente: "
+                      f"{(case.inherent_risk or 0) * 100:.0f}% · residual: "
+                      f"{(case.residual_risk or 0) * 100:.0f}%")
+    if case.action_plan:
+        linhas.append(f"- Plano de ação: {case.action_plan[:180]}")
+
+    # alertas/transação relacionadas
+    tx = (Transaction.objects.filter(
+        transaction_id=case.transaction_id).first()
+        if case.transaction_id else None)
+    related_alerts = []
+    if tx:
+        related_alerts = list(Alert.objects.filter(transaction=tx)[:5])
+    if not related_alerts and tx and tx.vendor:
+        related_alerts = list(Alert.objects.filter(
+            vendor=tx.vendor).order_by("-timestamp")[:5])
+    if related_alerts:
+        linhas.append(f"- Alertas relacionados: "
+                      + ", ".join(f"#{a.id} ({a.severity})"
+                                  for a in related_alerts[:4]))
+
+    insights = []
+    if case.deadline and case.deadline < now and \
+            case.status not in ("Resolved", "Closed"):
+        insights.append({"title": "Caso fora do prazo",
+                         "detail": "Reatribuir ou renegociar o prazo com o "
+                                   "responsável — violação de SLA ativa.",
+                         "tone": "danger"})
+    if not case.assigned_to:
+        insights.append({"title": "Sem responsável atribuído",
+                         "detail": "Casos sem owner tendem a estagnar — "
+                                   "atribua um responsável hoje.",
+                         "tone": "warn"})
+    if case.residual_risk is not None and case.residual_risk >= 0.7:
+        insights.append({"title": "Risco residual elevado",
+                         "detail": f"{case.residual_risk * 100:.0f}% mesmo "
+                                   "após controlos — considere ação "
+                                   "estrutural.", "tone": "danger"})
+    rows = [[a.id, a.vendor or "—", _fmt_money(a.amount), a.severity, a.status]
+            for a in related_alerts]
+    return {"tool": "explain", "title": f"Porquê do caso #{case.id}",
+            "summary": "\n".join(linhas),
+            "table": _table(["Alerta", "Fornecedor", "Valor", "Severidade",
+                             "Estado"], rows, len(rows)),
+            "insights": insights,
+            "meta": {"case_id": case.id, "related_alerts": len(related_alerts)}}
+
+
+def tool_trends(f: dict) -> dict:
+    """Tendências comparativas: esta semana vs semana passada + série diária."""
+    now = timezone.now()
+    start_this = now - timedelta(days=7)
+    start_prev = now - timedelta(days=14)
+
+    a_this = Alert.objects.filter(timestamp__gte=start_this).count()
+    a_prev = Alert.objects.filter(timestamp__gte=start_prev,
+                                  timestamp__lt=start_this).count()
+    t_this = Transaction.objects.filter(timestamp__gte=start_this)
+    t_prev = Transaction.objects.filter(timestamp__gte=start_prev,
+                                        timestamp__lt=start_this)
+    tx_this_c, tx_prev_c = t_this.count(), t_prev.count()
+    tx_this_s = float(t_this.aggregate(s=Sum("amount"))["s"] or 0)
+    tx_prev_s = float(t_prev.aggregate(s=Sum("amount"))["s"] or 0)
+
+    def _delta(cur, prev):
+        if prev:
+            return f"{(cur - prev) / prev * 100:+.0f}%"
+        return "—" if not cur else "+100%"
+
+    # série diária de 14 dias (alertas + transações)
+    rows = []
+    peak_day, peak_n = "—", -1
+    for i in range(13, -1, -1):
+        d0 = (now - timedelta(days=i)).replace(hour=0, minute=0,
+                                               second=0, microsecond=0)
+        d1 = d0 + timedelta(days=1)
+        na = Alert.objects.filter(timestamp__gte=d0, timestamp__lt=d1).count()
+        nt = Transaction.objects.filter(timestamp__gte=d0,
+                                        timestamp__lt=d1).count()
+        label = d0.strftime("%d/%m")
+        if na > peak_n:
+            peak_day, peak_n = label, na
+        rows.append([label, na, nt, _fmt_money(
+            Transaction.objects.filter(timestamp__gte=d0,
+                                       timestamp__lt=d1)
+            .aggregate(s=Sum("amount"))["s"] or 0)])
+
+    summary = (
+        f"**Tendências — esta semana vs semana passada**\n"
+        f"- Alertas: **{a_this}** vs {a_prev} ({_delta(a_this, a_prev)})\n"
+        f"- Transações: **{tx_this_c}** vs {tx_prev_c} "
+        f"({_delta(tx_this_c, tx_prev_c)}) · valor {_fmt_money(tx_this_s)} "
+        f"vs {_fmt_money(tx_prev_s)} ({_delta(float(tx_this_s), float(tx_prev_s))})\n"
+        f"- Dia de pico de alertas: **{peak_day}** ({peak_n} alertas)")
+    insights = []
+    if a_prev and a_this > a_prev * 1.25:
+        insights.append({"title": "Alertas em aceleração",
+                         "detail": f"{_delta(a_this, a_prev)} semana a semana — "
+                                   "valide se algum agente novo está a gerar "
+                                   "ruído ou se o risco subiu mesmo.",
+                         "tone": "warn"})
+    elif a_prev and a_this < a_prev * 0.75:
+        insights.append({"title": "Alertas em queda",
+                         "detail": f"{_delta(a_this, a_prev)} — bom momento "
+                                   "para limpar o backlog de casos.",
+                         "tone": "success"})
+    if tx_prev_s and tx_this_s > tx_prev_s * 1.3:
+        insights.append({"title": "Volume financeiro a subir",
+                         "detail": f"{_delta(float(tx_this_s), float(tx_prev_s))} "
+                                   "em valor transacionado — amostragem de "
+                                   "controlo recomendada.", "tone": "info"})
+    return {"tool": "trends", "title": "Tendências (14 dias)",
+            "summary": summary,
+            "table": _table(["Dia", "Alertas", "Transações", "Valor"], rows, 14),
+            "insights": insights,
+            "meta": {"alerts_this": a_this, "alerts_prev": a_prev,
+                     "tx_this": tx_this_c, "tx_prev": tx_prev_c,
+                     "peak_day": peak_day}}
+
+
 TOOL_FUNCS = {
     "overview": tool_overview,
     "alerts": tool_query_alerts,
@@ -850,6 +1215,9 @@ TOOL_FUNCS = {
     "duplicates": tool_find_duplicates,
     "forecast": tool_risk_forecast,
     "vendor": tool_vendor_profile,
+    "help": tool_help,
+    "explain": tool_explain,
+    "trends": tool_trends,
 }
 
 
@@ -889,6 +1257,12 @@ _TOOL_ACTIONS = {
     "duplicates": [{"label": "Análise no Excel Studio", "href": "/excel"}],
     "forecast": [{"label": "Ver previsão no painel", "href": "/"}],
     "vendor": [{"label": "Inspeção de transações", "href": "/transactions"}],
+    "help": [{"label": "Excel Studio", "href": "/excel"},
+             {"label": "Painel inicial", "href": "/"}],
+    "explain": [{"label": "Abrir Riscos", "href": "/alerts"},
+                {"label": "Abrir Casos", "href": "/cases"}],
+    "trends": [{"label": "Ver previsão no painel", "href": "/"},
+               {"label": "Abrir Riscos", "href": "/alerts"}],
 }
 
 
@@ -911,6 +1285,13 @@ def _followups_for(tool_names: list) -> list:
         "forecast": ["Resumo da plataforma", "Alertas críticos de hoje"],
         "vendor": ["Alertas críticos deste fornecedor",
                    "Deteta duplicados na base de dados"],
+        "help": ["Explica o alerta mais recente",
+                 "Compara esta semana com a semana passada",
+                 "Que análises o Excel Studio faz?"],
+        "explain": ["Criar caso a partir deste alerta",
+                    "Alertas críticos de hoje"],
+        "trends": ["Previsão de risco para os próximos dias",
+                   "Resumo da plataforma"],
     }
     out = []
     for t in tool_names:
@@ -1031,8 +1412,10 @@ def call_ollama_copilot(question: str, tool_results: list,
 # 5. ORQUESTRADOR DO CHAT
 # ---------------------------------------------------------------------------
 
-def chat(question: str, history: list = None) -> dict:
-    """Fluxo principal: router → tools → síntese (LLM com fallback)."""
+def chat(question: str, history: list = None, page: str = None) -> dict:
+    """Fluxo principal: router → tools → síntese (LLM com fallback).
+    `page` = rota atual do frontend — dá consciência de contexto quando
+    a pergunta é vaga (ex.: «e agora?» na página de SLA fala de SLA)."""
     import time
     t0 = time.time()
     question = (question or "").strip()[:1000]
@@ -1043,7 +1426,7 @@ def chat(question: str, history: list = None) -> dict:
                 "actions": [], "tables": [], "followups": [],
                 "latency_ms": 0}
 
-    tool_names = detect_tools(question)
+    tool_names = detect_tools(question, page=page)
     results = run_tools(tool_names, question)
 
     # resposta determinística (sempre calculada — garante consistência)
