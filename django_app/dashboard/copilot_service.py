@@ -34,8 +34,8 @@ from datetime import timedelta
 from django.db.models import Avg, Count, Max, Q, Sum
 from django.utils import timezone
 
-from .models import (Alert, AuditCase, ExcelImportJob, RiskAgent,
-                     Transaction)
+from .models import (Alert, AuditCase, CopilotFeedback, ExcelImportJob,
+                     RiskAgent, Transaction)
 
 logger = logging.getLogger(__name__)
 
@@ -1626,3 +1626,156 @@ def build_briefing() -> dict:
     return {"briefing_md": narrative, "kpis": kpis, "insights": insights,
             "actions": actions, "mode": "rules",
             "generated_at": timezone.now().isoformat()}
+
+
+# ---------------------------------------------------------------------------
+# 7. SINAIS PROATIVOS + QUALIDADE DO COPILOTO
+# ---------------------------------------------------------------------------
+
+def build_proactive_signals() -> dict:
+    """Varre a plataforma e devolve sinais acionáveis priorizados —
+    o copiloto avisa SEM ser perguntado. Cada sinal:
+    {level: critical|warning|info, title, detail,
+     action: {label, href}, question: pergunta pronta p/ o chat}
+    O frontend mostra um badge com a contagem e cartões que, num clique,
+    enviam a `question` ao copiloto — suporte proativo de verdade.
+    Todas as fontes são best-effort (falha numa fonte não derruba os sinais)."""
+    signals = []
+
+    def add(level, title, detail, action, question):
+        signals.append({"level": level, "title": title, "detail": detail,
+                        "action": action, "question": question})
+
+    # 1. Alertas críticos por resolver
+    try:
+        crit = (Alert.objects.filter(severity="Critical")
+                .exclude(status__in=["Resolved", "False Positive"]).count())
+        if crit:
+            add("critical", f"{crit} alertas críticos por resolver",
+                "Severidade Critical ainda em aberto — prioridade máxima "
+                "de investigação e criação de casos.",
+                {"label": "Abrir Riscos", "href": "/alerts"},
+                "Alertas críticos de hoje")
+    except Exception as e:
+        logger.warning("sinal alertas críticos falhou: %s", e)
+
+    # 2. Casos fora do prazo
+    try:
+        overdue = (AuditCase.objects
+                   .filter(deadline__lt=timezone.now())
+                   .exclude(status__in=["Resolved", "Closed"]).count())
+        if overdue:
+            add("critical", f"{overdue} casos fora do prazo",
+                "Casos abertos com deadline ultrapassado — risco de violação "
+                "de SLA regulatório.",
+                {"label": "Abrir Casos", "href": "/cases"},
+                "Casos fora do prazo")
+    except Exception as e:
+        logger.warning("sinal casos atrasados falhou: %s", e)
+
+    # 3. Benford em não conformidade (tool cacheada — repetição barata)
+    try:
+        ben = TOOL_FUNCS["benford"]({})
+        meta = ben.get("meta", {}) if isinstance(ben, dict) else {}
+        verdict = str(meta.get("verdict") or "")
+        if meta.get("mad") is not None and "Não conformidade" in verdict:
+            add("warning", f"Benford em não conformidade (MAD {meta['mad']:.4f})",
+                "A distribuição do primeiro dígito desvia do esperado — "
+                "possível manipulação de valores. Merece análise no Excel Studio.",
+                {"label": "Analisar no Excel", "href": "/excel"},
+                "Aplica a Lei de Benford à base de dados")
+    except Exception as e:
+        logger.warning("sinal benford falhou: %s", e)
+
+    # 4. Duplicados detetados
+    try:
+        dup = TOOL_FUNCS["duplicates"]({})
+        exact = dup.get("meta", {}).get("exact_groups", 0) if isinstance(dup, dict) else 0
+        if exact:
+            add("warning", f"{exact} grupos de transações duplicadas",
+                "Valores idênticos repetidos na base — possível duplo "
+                "pagamento ou erro de importação.",
+                {"label": "Ver duplicados", "href": "/excel"},
+                "Deteta duplicados na base de dados")
+    except Exception as e:
+        logger.warning("sinal duplicados falhou: %s", e)
+
+    # 5. Risco em alta (previsão)
+    try:
+        fc = TOOL_FUNCS["forecast"]({})
+        trend = str(fc.get("meta", {}).get("trend") or "")
+        if "alta" in trend:
+            add("warning", f"Risco em alta ({trend})",
+                "A previsão indica subida do volume de alertas para os "
+                "próximos dias — reforce a capacidade da equipa.",
+                {"label": "Ver previsão", "href": "/"},
+                "Previsão de risco para os próximos dias")
+    except Exception as e:
+        logger.warning("sinal previsão falhou: %s", e)
+
+    # 6. Importações Excel falhadas (últimos 7 dias)
+    try:
+        week_ago = timezone.now() - timedelta(days=7)
+        failed = (ExcelImportJob.objects
+                  .filter(created_at__gte=week_ago, status="Failed").count())
+        if failed:
+            add("info", f"{failed} importações de Excel falhadas (7 dias)",
+                "Ficheiros que não puderam ser processados — verifique o "
+                "formato e o mapeamento de colunas.",
+                {"label": "Abrir Excel Studio", "href": "/excel"},
+                "Importações de Excel recentes")
+    except Exception as e:
+        logger.warning("sinal importações falhou: %s", e)
+
+    # 7. Meta-sinal: qualidade do próprio copiloto em queda
+    try:
+        recent = list(CopilotFeedback.objects
+                      .order_by("-created_at")
+                      .values_list("rating", flat=True)[:20])
+        if len(recent) >= 5:
+            avg = sum(recent) / len(recent)
+            if avg < 3.0:
+                add("info", f"Avaliação do copiloto em queda ({avg:.1f}/5)",
+                    "As últimas respostas estão mal avaliadas — reveja as "
+                    "capacidades ou reformule as perguntas com mais contexto.",
+                    {"label": "Ver capacidades", "href": "/governance"},
+                    "O que sabes fazer?")
+    except Exception as e:
+        logger.warning("sinal feedback falhou: %s", e)
+
+    order = {"critical": 0, "warning": 1, "info": 2}
+    signals.sort(key=lambda s: order.get(s["level"], 9))
+    return {"signals": signals[:6], "count": len(signals[:6]),
+            "generated_at": timezone.now().isoformat()}
+
+
+def feedback_stats() -> dict:
+    """Análise de qualidade do Copiloto Global a partir das avaliações 1-5
+    dos utilizadores: média, distribuição, por modo (llm/regras), páginas
+    com pior média e perguntas mal avaliadas recentes (para revisão)."""
+    qs = CopilotFeedback.objects.all()
+    total = qs.count()
+    if not total:
+        return {"total": 0, "avg_rating": None, "distribution": {},
+                "by_mode": {}, "by_page": [], "recent_low": []}
+    avg = qs.aggregate(a=Avg("rating"))["a"]
+    distribution = {str(r): qs.filter(rating=r).count() for r in range(1, 6)}
+    by_mode = {}
+    for m in ("llm", "rules"):
+        sub = qs.filter(mode=m)
+        n = sub.count()
+        by_mode[m] = {"n": n,
+                      "avg": (round(sub.aggregate(a=Avg("rating"))["a"], 2)
+                              if n else None)}
+    by_page = [{"page": p["page"] or "—", "n": p["n"],
+                "avg": round(p["avg"], 2)}
+               for p in qs.values("page")
+               .annotate(n=Count("id"), avg=Avg("rating"))
+               .order_by("-n")[:5]]
+    recent_low = [{"rating": f.rating, "question": (f.question or "")[:140],
+                   "page": f.page or "—",
+                   "when": f.created_at.isoformat()}
+                  for f in qs.filter(rating__lte=2)[:5]]
+    return {"total": total, "avg_rating": round(avg, 2),
+            "distribution": distribution, "by_mode": by_mode,
+            "by_page": by_page, "recent_low": recent_low}

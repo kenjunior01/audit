@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { apiFetch } from '@/lib/api'
 import AIGovernanceDashboard from '@/components/dashboard/AIGovernanceDashboard'
+import CopilotQualityCard from '@/components/dashboard/CopilotQualityCard'
 import { ShieldCheck, AlertCircle, CheckCircle2, XCircle, Clock, Cpu } from 'lucide-react'
 
 type GovernanceEvent = {
@@ -59,6 +60,9 @@ export default function GovernancePage() {
 
       {/* Dashboard Overview */}
       <AIGovernanceDashboard />
+
+      {/* Qualidade do Copiloto Global (avaliações 1-5, apenas admin vê dados) */}
+      <CopilotQualityCard />
 
       {/* Detailed Event Log */}
       <div className="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden">

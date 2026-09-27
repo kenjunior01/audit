@@ -22,7 +22,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Sparkles, Loader2, Send, X, Copy, Check, Presentation, Lightbulb,
   ArrowRight, RotateCcw, AlertTriangle, CheckCircle2, Info, ShieldAlert,
-  Download, ThumbsUp, ThumbsDown, XCircle,
+  Download, ThumbsUp, ThumbsDown, XCircle, Zap,
 } from 'lucide-react'
 
 /* ----------------------------- tipos ----------------------------- */
@@ -43,6 +43,13 @@ type CopilotResponse = {
 }
 type Message = { role: 'user' | 'assistant'; content: string; data?: CopilotResponse; rated?: number }
 type LiveTrace = TraceEntry
+type Signal = {
+  level: 'critical' | 'warning' | 'info'
+  title: string
+  detail: string
+  action: { label: string; href: string }
+  question: string
+}
 
 /* ------------------- prompts contextuais por rota ------------------- */
 const PAGE_PROMPTS: Record<string, string[]> = {
@@ -73,6 +80,12 @@ const TONE_STYLE: Record<string, { icon: typeof Info; cls: string }> = {
   success: { icon: CheckCircle2, cls: 'bg-emerald-950/60 border-emerald-800 text-emerald-300' },
 }
 
+const SIGNAL_STYLE: Record<string, { bar: string; chip: string }> = {
+  critical: { bar: 'border-l-red-500', chip: 'bg-red-950/60 border-red-800 text-red-300' },
+  warning: { bar: 'border-l-amber-500', chip: 'bg-amber-950/60 border-amber-800 text-amber-300' },
+  info: { bar: 'border-l-sky-500', chip: 'bg-sky-950/60 border-sky-800 text-sky-300' },
+}
+
 /* --------------------------- componente --------------------------- */
 const CHAT_STORAGE_KEY = 'copilot-chat-v1'
 
@@ -97,6 +110,8 @@ export function CopilotDock() {
   const [error, setError] = useState('')
   const [liveStatus, setLiveStatus] = useState('')
   const [liveTrace, setLiveTrace] = useState<LiveTrace[]>([])
+  const [signals, setSignals] = useState<Signal[]>([])
+  const [signalsOpen, setSignalsOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // persiste a conversa (sessionStorage — sobrevive a navegação e refresh)
@@ -107,6 +122,20 @@ export function CopilotDock() {
 
   // páginas públicas sem copiloto
   const bare = pathname && ['/login', '/register', '/onboarding'].some(p => pathname.startsWith(p))
+
+  // sinais proativos — carregados no arranque e revalidados ao abrir o painel
+  const loadSignals = useCallback(async () => {
+    try {
+      const r = await apiFetch('/ai/copilot/insights')
+      if (!r.ok) return
+      const data = await r.json()
+      if (Array.isArray(data.signals)) setSignals(data.signals)
+    } catch { /* sinais são best-effort — nunca bloqueiam o copiloto */ }
+  }, [])
+
+  useEffect(() => {
+    if (!bare) loadSignals()
+  }, [bare, loadSignals])
 
   const send = useCallback(async (question: string) => {
     const q = question.trim()
@@ -300,12 +329,16 @@ export function CopilotDock() {
     <>
       {/* Botão flutuante */}
       <motion.button
-        onClick={() => setOpen(v => !v)}
+        onClick={() => setOpen(v => { const nv = !v; if (nv) loadSignals(); return nv })}
         className="fixed bottom-6 right-6 z-[60] w-14 h-14 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 shadow-[0_0_25px_rgba(59,130,246,0.5)] flex items-center justify-center text-white"
         whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.94 }}
         title="Copiloto Global (Ctrl+J)" aria-label="Abrir Copiloto">
         {open ? <X className="w-6 h-6" /> : <Sparkles className="w-6 h-6" />}
-        {!open && (
+        {!open && signals.length > 0 ? (
+          <span className="absolute -top-1 -right-1 min-w-[20px] h-5 px-1 rounded-full bg-red-500 border-2 border-slate-900 text-[10px] font-bold flex items-center justify-center">
+            {signals.length}
+          </span>
+        ) : !open && (
           <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-400 border-2 border-slate-900" />
         )}
       </motion.button>
@@ -346,6 +379,43 @@ export function CopilotDock() {
                 </button>
               )}
             </div>
+
+            {/* Sinais proativos — o copiloto avisa sem ser perguntado */}
+            {signals.length > 0 && (
+              <div className="border-b border-slate-800 bg-slate-950/60">
+                <button onClick={() => setSignalsOpen(v => !v)}
+                  className="w-full px-4 py-2 flex items-center gap-2 text-xs text-amber-300 hover:bg-slate-900 transition-colors">
+                  <Zap className="w-3.5 h-3.5" />
+                  <span className="flex-1 text-left font-medium">
+                    {signals.length} sinal{signals.length > 1 ? 'es' : ''} precisam de atenção
+                  </span>
+                  <span className="text-slate-500">{signalsOpen ? '△' : '▽'}</span>
+                </button>
+                {signalsOpen && (
+                  <div className="px-3 pb-3 space-y-2 max-h-52 overflow-y-auto">
+                    {signals.map((s, i) => {
+                      const st = SIGNAL_STYLE[s.level] || SIGNAL_STYLE.info
+                      return (
+                        <div key={i} className={`rounded-lg border border-slate-800 border-l-4 ${st.bar} bg-slate-900 p-2.5`}>
+                          <p className="text-xs font-semibold text-slate-200">{s.title}</p>
+                          <p className="text-[11px] text-slate-400 mt-0.5">{s.detail}</p>
+                          <div className="flex flex-wrap gap-1.5 mt-1.5">
+                            <button onClick={() => send(s.question)} disabled={loading}
+                              className="text-[10px] px-2 py-1 rounded-md bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40">
+                              Perguntar ao copiloto
+                            </button>
+                            <button onClick={() => { router.push(s.action.href); setOpen(false) }}
+                              className="text-[10px] px-2 py-1 rounded-md border border-slate-700 text-slate-300 hover:border-blue-500 hover:text-blue-300">
+                              {s.action.label}
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Mensagens */}
             <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4">

@@ -126,3 +126,33 @@ def copilot_feedback(request):
                      or getattr(user, "pk", "") or "")[:150],
     )
     return Response({"ok": True, "id": fb.id}, status=status.HTTP_201_CREATED)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def copilot_insights(request):
+    """Sinais proativos — o copiloto avisa sem ser perguntado.
+    Fontes best-effort: alertas críticos, casos fora do prazo, Benford,
+    duplicados, previsão de risco, importações falhadas e qualidade própria."""
+    try:
+        result = cs.build_proactive_signals()
+    except Exception as e:
+        logger.exception("copilot_insights falhou")
+        return Response({"error": f"Não foi possível gerar os sinais: {e}"},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    return Response(result)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def copilot_feedback_stats(request):
+    """Qualidade do Copiloto Global a partir das avaliações 1-5.
+    Apenas administradores — os outros papéis recebem 403."""
+    auth = getattr(request, "auth", None)
+    role = (auth.get("role") if isinstance(auth, dict)
+            else getattr(auth, "role", None))
+    if role != "admin":
+        return Response({"error": "Apenas administradores podem ver as "
+                                  "métricas de qualidade do copiloto."},
+                        status=status.HTTP_403_FORBIDDEN)
+    return Response(cs.feedback_stats())
