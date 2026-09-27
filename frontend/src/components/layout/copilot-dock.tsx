@@ -1,14 +1,18 @@
 "use client"
 /**
- * Copiloto Global da Plataforma (Omni Copilot)
- * ---------------------------------------------
+ * Copiloto Global da Plataforma (Omni Copilot) — v3
+ * --------------------------------------------------
  * Botão flutuante + painel de conversa disponível em TODAS as páginas.
  * - Perguntas em lingu natural sobre dados vivos: alertas, transações,
  *   casos, agentes IA, SLA, Excel, Benford, duplicados, previsões.
+ * - STREAMING SSE (/ai/copilot/stream): o utilizador vê a execução
+ *   agéntica em tempo real (ferramentas consultadas, duração de cada uma)
+ *   com fallback automático para o endpoint síncrono.
+ * - TRANSPARÊNCIA: trace agéntico por resposta (ferramenta · duração).
+ * - FEEDBACK (👍/👎) por resposta → /ai/copilot/feedback (ciclo de
+ *   melhoria contínua do modelo de suporte).
+ * - EXPORTAR conversa em Markdown; conversa persistente por sessão.
  * - Prompts contextuais consoante a página atual (rota).
- * - Respostas ricas: markdown, cartões de insight, tabelas de dados,
- *   ações navegáveis (router.push), followups.
- * - Botão "Briefing" → snapshot executivo proativo.
  * Atalho: Ctrl/Cmd + J.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -18,23 +22,27 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Sparkles, Loader2, Send, X, Copy, Check, Presentation, Lightbulb,
   ArrowRight, RotateCcw, AlertTriangle, CheckCircle2, Info, ShieldAlert,
+  Download, ThumbsUp, ThumbsDown, XCircle,
 } from 'lucide-react'
 
 /* ----------------------------- tipos ----------------------------- */
 type Insight = { title: string; detail: string; tone: 'info' | 'warn' | 'danger' | 'success' }
 type Action = { label: string; href: string }
 type Table = { columns: string[]; rows: unknown[][]; shown: number; total: number }
+type TraceEntry = { tool: string; title: string; ok?: boolean; ms?: number }
 type CopilotResponse = {
   answer: string
   mode: 'llm' | 'rules'
   tools_used: string[]
+  trace?: TraceEntry[]
   insights: Insight[]
   actions: Action[]
   tables: Table[]
   followups: string[]
   latency_ms?: number
 }
-type Message = { role: 'user' | 'assistant'; content: string; data?: CopilotResponse }
+type Message = { role: 'user' | 'assistant'; content: string; data?: CopilotResponse; rated?: number }
+type LiveTrace = TraceEntry
 
 /* ------------------- prompts contextuais por rota ------------------- */
 const PAGE_PROMPTS: Record<string, string[]> = {
@@ -87,6 +95,8 @@ export function CopilotDock() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [liveStatus, setLiveStatus] = useState('')
+  const [liveTrace, setLiveTrace] = useState<LiveTrace[]>([])
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // persiste a conversa (sessionStorage — sobrevive a navegação e refresh)
@@ -106,20 +116,108 @@ export function CopilotDock() {
     const history = messages.slice(-6).map(m => ({ role: m.role, content: m.content }))
     setMessages(m => [...m, { role: 'user', content: q }])
     setLoading(true)
+    setLiveTrace([])
+    setLiveStatus('A interpretar a pergunta…')
+
+    const finish = (data: CopilotResponse) => {
+      setMessages(m => [...m, { role: 'assistant', content: data.answer, data }])
+      setLiveTrace([])
+      setLiveStatus('')
+    }
+    const fail = (msg: string) => {
+      setLiveTrace([])
+      setLiveStatus('')
+      setError(msg)
+      setMessages(m => (m.length > 0 && m[m.length - 1].role === 'user' ? m.slice(0, -1) : m))
+    }
+
     try {
-      const r = await apiFetch('/ai/copilot', {
+      /* streaming SSE — execução agéntica em tempo real */
+      const res = await apiFetch('/ai/copilot/stream', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
         body: JSON.stringify({ question: q, history, page: pathname }),
       })
-      const data = await r.json()
-      if (!r.ok) throw new Error(data.error || `Erro ${r.status}`)
-      setMessages(m => [...m, { role: 'assistant', content: data.answer, data }])
+      if (!res.ok || !res.body) throw new Error('stream-indisponível')
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+      let receivedFinal = false
+      while (!receivedFinal) {
+        const chunk = await reader.read()
+        if (chunk.done) break
+        buf += decoder.decode(chunk.value, { stream: true })
+        const parts = buf.split('\n\n')
+        buf = parts.pop() || ''
+        for (const part of parts) {
+          let ev = 'message'
+          let dataStr = ''
+          for (const line of part.split('\n')) {
+            if (line.startsWith('event: ')) ev = line.slice(7).trim()
+            else if (line.startsWith('data: ')) dataStr += line.slice(6)
+          }
+          if (!dataStr) continue
+          let data: any
+          try { data = JSON.parse(dataStr) } catch { continue }
+          if (ev === 'status') {
+            setLiveStatus(data.msg || 'A trabalhar…')
+          } else if (ev === 'tool_start') {
+            setLiveTrace(t => [...t, { tool: data.tool, title: data.title }])
+          } else if (ev === 'tool_done') {
+            setLiveTrace(t => {
+              const idx = t.findIndex(x => x.tool === data.tool && x.ms === undefined)
+              if (idx >= 0) {
+                const cp = [...t]
+                cp[idx] = { ...cp[idx], ok: data.ok, ms: data.ms }
+                return cp
+              }
+              return [...t, { tool: data.tool, title: data.title, ok: data.ok, ms: data.ms }]
+            })
+          } else if (ev === 'final') {
+            receivedFinal = true
+            finish(data as CopilotResponse)
+          } else if (ev === 'error') {
+            throw new Error(data.error || 'Erro no copiloto')
+          }
+        }
+      }
+      if (!receivedFinal) throw new Error('Resposta incompleta do copiloto')
     } catch (e: any) {
-      setError(e.message)
-      setMessages(m => (m.length > 0 && m[m.length - 1].role === 'user' ? m.slice(0, -1) : m))
+      /* fallback: endpoint síncrono (proxies sem streaming, SSE bloqueado) */
+      try {
+        const r = await apiFetch('/ai/copilot', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question: q, history, page: pathname }),
+        })
+        const data = await r.json()
+        if (!r.ok) throw new Error(data.error || `Erro ${r.status}`)
+        setError('')
+        finish(data)
+      } catch (e2: any) {
+        fail(e2.message)
+      }
     } finally { setLoading(false) }
-  }, [loading, messages])
+  }, [loading, messages, pathname])
+
+  const rate = useCallback(async (idx: number, rating: number) => {
+    const m = messages[idx]
+    if (!m?.data || m.rated) return
+    setMessages(list => list.map((x, i) => i === idx ? { ...x, rated: rating } : x))
+    try {
+      await apiFetch('/ai/copilot/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rating,
+          question: messages[idx - 1]?.role === 'user' ? messages[idx - 1].content : '',
+          answer: (m.data?.answer || m.content || '').slice(0, 2000),
+          mode: m.data?.mode || '',
+          page: pathname,
+        }),
+      })
+    } catch { /* feedback é best-effort — não interrompe a conversa */ }
+  }, [messages, pathname])
 
   const loadBriefing = useCallback(async () => {
     if (loading) return
@@ -145,12 +243,42 @@ export function CopilotDock() {
     } finally { setLoading(false) }
   }, [loading])
 
+  // exportar conversa em Markdown
+  const exportTranscript = useCallback(() => {
+    if (!messages.length) return
+    const lines: string[] = ['# Conversa com o Copiloto Global', '',
+      `_Exportada em ${new Date().toLocaleString('pt-PT')}_`, '']
+    for (const m of messages) {
+      if (m.role === 'user') {
+        lines.push(`**Utilizador:** ${m.content}`, '')
+      } else {
+        lines.push(`**Copiloto:**`, '', m.content, '')
+        const tr = m.data?.trace
+        if (tr?.length) {
+          lines.push(
+            `> Ferramentas: ${tr.map(t => `${t.title} (${t.ms ?? '—'} ms${t.ok === false ? ', falhou' : ''})`).join(' · ')}`,
+            `> Modo: ${m.data?.mode === 'llm' ? 'LLM' : 'regras'}${m.data?.latency_ms !== undefined ? ` · ${m.data.latency_ms} ms` : ''}`,
+            '')
+        }
+      }
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `copiloto-conversa-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '')}.md`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }, [messages])
+
   // auto-scroll para a última mensagem
   useEffect(() => {
     if (open && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
-  }, [messages, open, loading])
+  }, [messages, open, loading, liveTrace, liveStatus])
 
   // atalho Ctrl/Cmd+J
   useEffect(() => {
@@ -196,13 +324,20 @@ export function CopilotDock() {
               <Sparkles className="w-5 h-5 text-blue-400" />
               <div className="flex-1">
                 <p className="text-sm font-semibold text-white">Copiloto Global</p>
-                <p className="text-[11px] text-slate-400">Dados vivos · toda a plataforma · com contexto da página</p>
+                <p className="text-[11px] text-slate-400">Streaming agéntico · toda a plataforma · contexto da página</p>
               </div>
               <button onClick={loadBriefing} disabled={loading}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-600/80 hover:bg-indigo-500 text-white text-xs disabled:opacity-50"
                 title="Briefing executivo">
                 <Presentation className="w-3.5 h-3.5" /> Briefing
               </button>
+              {messages.length > 0 && (
+                <button onClick={exportTranscript} disabled={loading}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+                  title="Exportar conversa (Markdown)">
+                  <Download className="w-3.5 h-3.5" />
+                </button>
+              )}
               {messages.length > 0 && (
                 <button onClick={() => setMessages([])} disabled={loading}
                   className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 disabled:opacity-50"
@@ -221,7 +356,7 @@ export function CopilotDock() {
                   <p className="text-xs text-slate-500 mt-1 px-4">
                     Alertas, transações, casos, agentes IA, SLA, Benford, duplicados,
                     previsões — respondo com números reais e levo-o onde precisa.
-                    Pergunte também «explica o alerta 42» para análise de causa.
+                    Vê a minha execução em tempo real e avalia as respostas com 👍/👎.
                   </p>
                 </div>
               )}
@@ -232,14 +367,33 @@ export function CopilotDock() {
                 </div>
               ) : (
                 <CopilotMessage key={i} data={m.data} fallback={m.content}
+                  rated={m.rated}
+                  onRate={rating => rate(i, rating)}
                   onAction={href => { router.push(href) }}
                   onFollowup={q => send(q)} />
               ))}
 
               {loading && (
-                <div className="flex items-center gap-2 text-slate-400 text-sm px-1">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  O Copiloto está a consultar a plataforma…
+                <div className="space-y-1.5 px-1">
+                  <div className="flex items-center gap-2.5 text-slate-400 text-sm">
+                    <span className="flex gap-1 items-end h-3">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce [animation-delay:0ms]" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce [animation-delay:150ms]" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce [animation-delay:300ms]" />
+                    </span>
+                    {liveStatus || 'O Copiloto está a consultar a plataforma…'}
+                  </div>
+                  {liveTrace.map((t, i) => (
+                    <div key={`${t.tool}-${i}`} className="flex items-center gap-2 text-[11px] pl-1">
+                      {t.ms !== undefined ? (
+                        t.ok === false
+                          ? <XCircle className="w-3 h-3 text-red-400 shrink-0" />
+                          : <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                      ) : <Loader2 className="w-3 h-3 animate-spin text-blue-400 shrink-0" />}
+                      <span className={t.ms !== undefined ? 'text-slate-400' : 'text-slate-200'}>{t.title}</span>
+                      {t.ms !== undefined && <span className="text-slate-600">{t.ms} ms</span>}
+                    </div>
+                  ))}
                 </div>
               )}
               {error && (
@@ -279,13 +433,18 @@ export function CopilotDock() {
 }
 
 /* ------------------- mensagem rica do copiloto ------------------- */
-function CopilotMessage({ data, fallback, onAction, onFollowup }: {
+function CopilotMessage({ data, fallback, rated, onRate, onAction, onFollowup }: {
   data?: CopilotResponse
   fallback: string
+  rated?: number
+  onRate?: (rating: number) => void
   onAction: (href: string) => void
   onFollowup: (q: string) => void
 }) {
   const [copied, setCopied] = useState(false)
+  const traceEntries: TraceEntry[] = data?.trace?.length
+    ? data.trace
+    : (data?.tools_used || []).map(t => ({ tool: t, title: t }))
   const copyAnswer = async () => {
     try {
       await navigator.clipboard.writeText(fallback)
@@ -305,8 +464,11 @@ function CopilotMessage({ data, fallback, onAction, onFollowup }: {
           </button>
           {data && (
             <div className="flex flex-wrap items-center gap-1.5 pt-1.5 text-[10px] text-slate-500">
-              {data.tools_used.map(t => (
-                <span key={t} className="px-1.5 py-0.5 rounded-full bg-slate-900 border border-slate-700">{t}</span>
+              {traceEntries.map((t, i) => (
+                <span key={`${t.tool}-${i}`} title={t.ms !== undefined ? `${t.ms} ms` : undefined}
+                  className="px-1.5 py-0.5 rounded-full bg-slate-900 border border-slate-700">
+                  {t.title}{t.ms !== undefined ? ` · ${t.ms} ms` : ''}
+                </span>
               ))}
               <span className="px-1.5 py-0.5 rounded-full bg-slate-900 border border-slate-700">
                 {data.mode === 'llm' ? 'LLM' : 'regras'}
@@ -377,6 +539,23 @@ function CopilotMessage({ data, fallback, onAction, onFollowup }: {
                 <Lightbulb className="w-3 h-3" /> {fu}
               </button>
             ))}
+          </div>
+        )}
+
+        {/* Feedback do utilizador (ciclo de melhoria contínua) */}
+        {onRate && (
+          <div className="flex items-center gap-1.5">
+            <button onClick={() => onRate(5)} disabled={!!rated}
+              className={`p-1 rounded transition-colors ${rated === 5 ? 'text-emerald-400' : 'text-slate-600 hover:text-emerald-400 disabled:opacity-40'}`}
+              title="Resposta útil">
+              <ThumbsUp className="w-3.5 h-3.5" />
+            </button>
+            <button onClick={() => onRate(1)} disabled={!!rated}
+              className={`p-1 rounded transition-colors ${rated === 1 ? 'text-red-400' : 'text-slate-600 hover:text-red-400 disabled:opacity-40'}`}
+              title="Resposta pouco útil">
+              <ThumbsDown className="w-3.5 h-3.5" />
+            </button>
+            {rated && <span className="text-[10px] text-slate-500">Obrigado pelo feedback!</span>}
           </div>
         )}
       </div>

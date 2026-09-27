@@ -522,3 +522,29 @@ class AIGovernanceEvent(models.Model):
 
     class Meta:
         ordering = ['-timestamp']
+
+
+class CopilotFeedback(models.Model):
+    """Avaliação (1-5) do utilizador sobre respostas do Copiloto Global.
+    Fecha o ciclo de feedback do modelo de suporte: respostas mal
+    avaliadas podem ser revistas; métricas por página/modo orientam
+    melhorias contínuas."""
+    id = models.AutoField(primary_key=True)
+    rating = models.IntegerField()  # 1-5 (1 = péssima, 5 = excelente)
+    question = models.TextField(blank=True)
+    answer_excerpt = models.TextField(blank=True)  # recorte da resposta
+    mode = models.CharField(max_length=10, blank=True)  # 'llm' | 'rules'
+    page = models.CharField(max_length=60, blank=True)  # rota do frontend
+    comment = models.TextField(blank=True)
+    username = models.CharField(max_length=150, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['created_at'], name='dashboard_cpf_created_idx'),
+            models.Index(fields=['rating'], name='dashboard_cpf_rating_idx'),
+        ]
+
+    def __str__(self):
+        return f"Feedback {self.rating}/5 ({self.page or '—'})"

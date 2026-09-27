@@ -19,16 +19,19 @@ navegáveis — o "boost" que leva a IA a todos os cantos da plataforma.
 
 Endpoints (copilot_views.py):
 - POST /ai/copilot            → chat {question, history}
+- POST /ai/copilot/stream     → chat em streaming (Server-Sent Events)
 - GET  /ai/copilot/briefing   → briefing executivo proativo
+- POST /ai/copilot/feedback   → avaliação (1-5) de respostas pelo utilizador
 """
 import json
 import logging
 import os
 import re
+import time
 import unicodedata
 from datetime import timedelta
 
-from django.db.models import Avg, Count, Q, Sum
+from django.db.models import Avg, Count, Max, Q, Sum
 from django.utils import timezone
 
 from .models import (Alert, AuditCase, ExcelImportJob, RiskAgent,
@@ -1203,6 +1206,57 @@ def tool_trends(f: dict) -> dict:
                      "peak_day": peak_day}}
 
 
+# ---------------------------------------------------------------------------
+# 2b. CACHE TTL para ferramentas pesadas (Benford, duplicados, previsão…)
+# ---------------------------------------------------------------------------
+
+COPILOT_CACHE_TTL = float(os.environ.get("AUDIT_COPILOT_CACHE_TTL", "45"))
+_tool_cache: dict = {}
+
+
+def _data_fingerprint():
+    """Assinatura barata dos dados (contagens + últimos IDs + última data).
+    Muda quando qualquer transação/alerta/caso é criado, apagado ou
+    retrodatado → invalida a cache sem consultas pesadas."""
+    try:
+        a = Alert.objects.aggregate(c=Count("id"), m=Max("id"), t=Max("timestamp"))
+        t = Transaction.objects.aggregate(c=Count("id"), m=Max("id"),
+                                          t=Max("timestamp"))
+        c = AuditCase.objects.aggregate(c=Count("id"), m=Max("id"))
+        return (a["c"], a["m"], str(a["t"]), t["c"], t["m"], str(t["t"]),
+                c["c"], c["m"])
+    except Exception:
+        return None
+
+
+def _cacheable(tool_name: str):
+    """Decorator de cache TTL para tools pesadas. Invalidada automaticamente
+    quando os dados mudam (fingerprint) ou quando expira o TTL (por omissão
+    45 s; 0 desativa via AUDIT_COPILOT_CACHE_TTL)."""
+    def deco(fn):
+        def wrapper(f: dict):
+            if COPILOT_CACHE_TTL <= 0:
+                return fn(f)
+            fp = _data_fingerprint()
+            if fp is None:
+                return fn(f)
+            try:
+                key = (tool_name, repr(sorted((k, str(v)) for k, v in f.items())), fp)
+            except Exception:
+                return fn(f)
+            hit = _tool_cache.get(key)
+            now = time.monotonic()
+            if hit and (now - hit[0]) < COPILOT_CACHE_TTL:
+                return hit[1]
+            value = fn(f)
+            if len(_tool_cache) > 64:
+                _tool_cache.clear()
+            _tool_cache[key] = (now, value)
+            return value
+        return wrapper
+    return deco
+
+
 TOOL_FUNCS = {
     "overview": tool_overview,
     "alerts": tool_query_alerts,
@@ -1211,13 +1265,31 @@ TOOL_FUNCS = {
     "sla": tool_sla_check,
     "agents": tool_agents_status,
     "excel": tool_excel_imports,
-    "benford": tool_benford_check,
-    "duplicates": tool_find_duplicates,
-    "forecast": tool_risk_forecast,
-    "vendor": tool_vendor_profile,
+    "benford": _cacheable("benford")(tool_benford_check),
+    "duplicates": _cacheable("duplicates")(tool_find_duplicates),
+    "forecast": _cacheable("forecast")(tool_risk_forecast),
+    "vendor": _cacheable("vendor")(tool_vendor_profile),
     "help": tool_help,
     "explain": tool_explain,
     "trends": tool_trends,
+}
+
+# Rótulos PT legíveis das ferramentas — usados no trace agéntico (UI e LLM)
+TOOL_LABELS = {
+    "help": "Capacidades do copiloto",
+    "explain": "Explicabilidade",
+    "overview": "Resumo da plataforma",
+    "vendor": "Perfil de fornecedor",
+    "forecast": "Previsão de risco",
+    "trends": "Tendências",
+    "alerts": "Alertas",
+    "transactions": "Transações",
+    "cases": "Casos",
+    "sla": "SLA",
+    "agents": "Agentes IA",
+    "excel": "Excel Studio",
+    "benford": "Lei de Benford",
+    "duplicates": "Duplicados",
 }
 
 
@@ -1409,25 +1481,60 @@ def call_ollama_copilot(question: str, tool_results: list,
 
 
 # ---------------------------------------------------------------------------
-# 5. ORQUESTRADOR DO CHAT
+# 5. ORQUESTRADOR DO CHAT (pipeline com eventos — permite streaming SSE)
 # ---------------------------------------------------------------------------
 
-def chat(question: str, history: list = None, page: str = None) -> dict:
-    """Fluxo principal: router → tools → síntese (LLM com fallback).
-    `page` = rota atual do frontend — dá consciência de contexto quando
-    a pergunta é vaga (ex.: «e agora?» na página de SLA fala de SLA)."""
-    import time
+def chat_events(question: str, history: list = None, page: str = None):
+    """Gerador do pipeline agéntico — emite eventos dict:
+    {"event": "status"|"tool_start"|"tool_done"|"final", "data": {...}}
+
+    O último evento é sempre "final" com a resposta completa (mesmo formato
+    de chat()). Alimenta o endpoint SSE /ai/copilot/stream (o utilizador vê
+    as ferramentas a serem consultadas em tempo real) e o chat() síncrono."""
     t0 = time.time()
     question = (question or "").strip()[:1000]
     if not question:
-        return {"answer": "Faça uma pergunta sobre a plataforma: alertas, "
-                          "transações, casos, agentes, SLA, Excel…",
-                "mode": "rules", "tools_used": [], "insights": [],
-                "actions": [], "tables": [], "followups": [],
-                "latency_ms": 0}
+        yield {"event": "final",
+               "data": {"answer": "Faça uma pergunta sobre a plataforma: "
+                          "alertas, transações, casos, agentes, SLA, Excel…",
+                        "mode": "rules", "tools_used": [], "trace": [],
+                        "insights": [], "actions": [], "tables": [],
+                        "followups": [], "latency_ms": 0}}
+        return
+
+    yield {"event": "status",
+           "data": {"phase": "router", "msg": "A interpretar a pergunta…"}}
 
     tool_names = detect_tools(question, page=page)
-    results = run_tools(tool_names, question)
+    f = extract_filters(question)
+    results, trace = [], []
+    for name in tool_names:
+        fn = TOOL_FUNCS.get(name)
+        if not fn:
+            continue
+        yield {"event": "tool_start",
+               "data": {"tool": name,
+                        "title": TOOL_LABELS.get(name, name)}}
+        ts = time.time()
+        try:
+            r = fn(f)
+            ok = True
+        except Exception as e:  # tool nunca derruba o chat
+            logger.warning("copilot tool %s falhou: %s", name, e)
+            r = {"tool": name, "title": name,
+                 "summary": "Não foi possível obter estes dados agora. "
+                            "Tente novamente em instantes.",
+                 "insights": [], "meta": {}}
+            ok = False
+        entry = {"tool": name,
+                 "title": r.get("title") or TOOL_LABELS.get(name, name),
+                 "ok": ok, "ms": int((time.time() - ts) * 1000)}
+        results.append(r)
+        trace.append(entry)
+        yield {"event": "tool_done", "data": entry}
+
+    yield {"event": "status",
+           "data": {"phase": "synthesize", "msg": "A compor a resposta…"}}
 
     # resposta determinística (sempre calculada — garante consistência)
     rule_answer = "\n\n".join(r["summary"] for r in results)
@@ -1446,19 +1553,30 @@ def chat(question: str, history: list = None, page: str = None) -> dict:
 
     # tentativa de síntese LLM (substitui answer/insights/actions/followups)
     llm = call_ollama_copilot(question, results, history)
-    if llm:
-        return {"answer": llm["answer"], "mode": "llm",
-                "tools_used": tool_names,
-                "insights": llm["insights"] or insights[:4],
-                "actions": llm["actions"] or actions,
-                "tables": tables,
-                "followups": llm["followups"] or followups,
-                "latency_ms": int((time.time() - t0) * 1000)}
-    return {"answer": rule_answer or "Não encontrei dados para esta pergunta.",
-            "mode": "rules", "tools_used": tool_names,
-            "insights": insights, "actions": actions, "tables": tables,
-            "followups": followups,
+    base = {"tools_used": tool_names, "trace": trace, "tables": tables,
             "latency_ms": int((time.time() - t0) * 1000)}
+    if llm:
+        yield {"event": "final", "data": {**base, "answer": llm["answer"],
+                "mode": "llm", "insights": llm["insights"] or insights[:4],
+                "actions": llm["actions"] or actions,
+                "followups": llm["followups"] or followups}}
+        return
+    yield {"event": "final", "data": {**base,
+            "answer": rule_answer or "Não encontrei dados para esta pergunta.",
+            "mode": "rules", "insights": insights, "actions": actions,
+            "followups": followups}}
+
+
+def chat(question: str, history: list = None, page: str = None) -> dict:
+    """Fluxo principal: router → tools → síntese (LLM com fallback).
+    `page` = rota atual do frontend — dá consciência de contexto quando
+    a pergunta é vaga (ex.: «e agora?» na página de SLA fala de SLA).
+    Consumo síncrono de chat_events(): devolve o evento final."""
+    final = {}
+    for ev in chat_events(question, history, page=page):
+        if ev.get("event") == "final":
+            final = ev.get("data") or {}
+    return final
 
 
 # ---------------------------------------------------------------------------
