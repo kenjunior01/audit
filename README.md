@@ -120,6 +120,7 @@ npm run dev                     # http://localhost:3000
 | `OLLAMA_URL` | `localhost:11434` | Endpoint do LLM local |
 | `AUDIT_OLLAMA_MODEL` | — | Ex.: `deepseek-r1:8b` (vazio = modo regras) |
 | `AUDIT_OLLAMA_TIMEOUT` | `60` | Timeout do LLM (s) |
+| `AUDIT_OLLAMA_PROBE_TTL` | `60` | Cooldown da sonda de disponibilidade (s); Ollama em baixo → chat degrada para regras sem esperar o timeout |
 | `NEXT_PUBLIC_API_BASE` | `http://127.0.0.1:8000` | Base da API para o proxy do Next |
 
 Lista completa e infra self-hosted: [README_INFRA.md](README_INFRA.md) e

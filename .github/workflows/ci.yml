@@ -33,6 +33,7 @@ jobs:
       - name: Testes (suítes explícitas)
         run: |
           python manage.py test \
+            dashboard.tests.test_copilot_v9 \
             dashboard.tests.test_copilot_v8 \
             dashboard.tests.test_copilot_v7 \
             dashboard.tests.test_copilot_v6 \
