@@ -1,0 +1,17 @@
+.git
+.github
+**/__pycache__
+**/*.pyc
+**/*.pyo
+*.db
+django_app/media/
+django_app/static/
+frontend/node_modules
+frontend/.next
+frontend/.turbo
+*.log
+.env
+.env.local
+download/
+*.zip
+*.patch

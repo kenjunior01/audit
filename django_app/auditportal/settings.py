@@ -84,8 +84,17 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
-# Email Backend for Development (Console)
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+# Email — console por defeito; SMTP real via env (necessário para o
+# digest programado enviar de verdade em produção):
+#   AUDIT_EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+#   EMAIL_HOST / EMAIL_PORT / EMAIL_HOST_USER / EMAIL_HOST_PASSWORD / EMAIL_USE_TLS
+EMAIL_BACKEND = os.environ.get(
+    'AUDIT_EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
+EMAIL_HOST = os.environ.get('EMAIL_HOST', '')
+EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True').lower() in ('1', 'true', 'yes', 'on')
 
 STATIC_URL = '/django/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'static')
