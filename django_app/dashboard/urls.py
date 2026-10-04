@@ -5,7 +5,8 @@ from .excel_views import excel_preview, excel_import, excel_analyze, excel_recon
 from .copilot_views import (copilot_chat, copilot_briefing, copilot_stream,
                             copilot_feedback, copilot_insights,
                             copilot_feedback_stats, copilot_digest,
-                            copilot_digest_pdf, copilot_act)
+                            copilot_digest_pdf, copilot_digest_email_preview,
+                            copilot_act)
 
 router = DefaultRouter()
 router.register(r'governance', AIGovernanceViewSet, basename='governance')
@@ -86,5 +87,7 @@ urlpatterns = [
     path('ai/copilot/digest', copilot_digest, name='copilot_digest'),
     path('ai/copilot/digest/pdf', copilot_digest_pdf,
          name='copilot_digest_pdf'),
+    path('ai/copilot/digest/email/preview', copilot_digest_email_preview,
+         name='copilot_digest_email_preview'),
     path('ai/copilot/act', copilot_act, name='copilot_act'),
 ]

@@ -1875,6 +1875,188 @@ def digest_email_body(digest: dict) -> str:
     return "\n".join(lines)
 
 
+def digest_email_html(digest: dict) -> str:
+    """Versão HTML premium do email do digest — estrutura em tabelas com
+    CSS inline (compatível com Gmail/Outlook), cabeçalho navy, grelha de
+    KPIs, sinais com badges coloridos (CRÍTICO/AVISO/INFO), insights e
+    qualidade do copiloto. Todo o texto dinâmico passa por html.escape —
+    nenhum dado da plataforma pode injetar markup no email."""
+    from html import escape
+
+    period = digest.get("period", "daily")
+    period_label = {"daily": "Diário", "weekly": "Semanal"}.get(period, period)
+    generated = str(digest.get("generated_at", ""))[:19].replace("T", " ")
+
+    def esc(v) -> str:
+        return escape(str(v if v is not None else ""))
+
+    # — badges de sinal —
+    badge = {
+        "critical": ("CRÍTICO", "#dc2626", "#fee2e2"),
+        "warning": ("AVISO", "#b45309", "#fef3c7"),
+    }
+    k = digest.get("kpis") or {}
+    amount = f"€{float(k.get('transactions_amount') or 0):,.2f}".replace(
+        ",", "X").replace(".", ",").replace("X", ".")
+    kpi_grid = [
+        ("Transações", esc(k.get("transactions_total", "—"))),
+        ("Valor total", esc(amount)),
+        ("Alertas abertos", esc(k.get("open_alerts", "—"))),
+        ("Críticos", esc(k.get("critical_alerts", "—"))),
+        ("Casos abertos", esc(k.get("cases_open", "—"))),
+        ("Fora do prazo", esc(k.get("cases_overdue", "—"))),
+        ("Benford MAD", esc(k.get("benford_mad") if k.get("benford_mad")
+                            is not None else "—")),
+        ("Tendência", esc(k.get("trend", "—"))),
+    ]
+    kpi_html = "".join(
+        f'<td width="25%" style="padding:10px 8px;border:1px solid #e2e8f0;'
+        f'text-align:center;background:#ffffff;">'
+        f'<div style="font-size:17px;font-weight:700;color:#0f172a;'
+        f'font-family:Arial,sans-serif;">{val}</div>'
+        f'<div style="font-size:10px;color:#64748b;text-transform:uppercase;'
+        f'letter-spacing:.05em;font-family:Arial,sans-serif;'
+        f'padding-top:3px;">{lab}</div></td>'
+        for lab, val in kpi_grid)
+    kpi_rows = (f"<tr>{''.join(kpi_html[0:4])}</tr>"
+                f"<tr>{''.join(kpi_html[4:8])}</tr>")
+
+    sig_rows = []
+    for s in digest.get("signals") or []:
+        lab, fg, bg = badge.get(s.get("level"), ("INFO", "#1d4ed8", "#dbeafe"))
+        act = s.get("action") or {}
+        if act.get("href"):
+            if str(act.get("href", "")).startswith("http"):
+                act_html = (f'<a href="{esc(act["href"])}" style="color:'
+                            f'#1d4ed8;font-weight:600;text-decoration:none;'
+                            f'font-family:Arial,sans-serif;">'
+                            f'{esc(act.get("label", "Abrir"))} &rarr;</a>')
+            else:
+                act_html = (f'<span style="color:#334155;font-family:'
+                            f'Consolas,monospace;font-size:11px;">'
+                            f'{esc(act.get("label", ""))} · {esc(act["href"])}'
+                            f'</span>')
+        else:
+            act_html = ""
+        sig_rows.append(
+            f'<tr><td style="padding:8px 0;border-bottom:1px solid #e2e8f0;">'
+            f'<table role="presentation" width="100%"><tr>'
+            f'<td style="width:76px;vertical-align:top;">'
+            f'<span style="display:inline-block;padding:3px 8px;'
+            f'border-radius:999px;background:{bg};color:{fg};font-size:10px;'
+            f'font-weight:700;letter-spacing:.06em;font-family:Arial,'
+            f'sans-serif;">{lab}</span></td>'
+            f'<td style="vertical-align:top;font-family:Arial,sans-serif;">'
+            f'<div style="font-size:13px;font-weight:700;color:#0f172a;">'
+            f'{esc(s.get("title", ""))}</div>'
+            f'<div style="font-size:12px;color:#475569;padding-top:2px;">'
+            f'{esc(s.get("detail", ""))}</div>'
+            f'<div style="padding-top:4px;">{act_html}</div>'
+            f'</td></tr></table></td></tr>')
+    signals_html = "".join(sig_rows)
+
+    ins_items = "".join(
+        f'<li style="margin:0 0 6px;color:#334155;font-size:12px;'
+        f'font-family:Arial,sans-serif;"><b style="color:#0f172a;">'
+        f'{esc(i.get("title", ""))}</b> — {esc(i.get("detail", ""))}</li>'
+        for i in (digest.get("insights") or [])[:6])
+    insights_html = (f'<ul style="margin:8px 0 0;padding-left:18px;">'
+                     f'{ins_items}</ul>') if ins_items else ""
+
+    fb = digest.get("feedback") or {}
+    quality_html = ""
+    if fb.get("avg_rating") is not None:
+        avg = float(fb["avg_rating"])
+        stars = ("★" * int(round(avg))).ljust(5, "☆")
+        low_rows = "".join(
+            f'<tr><td style="padding:3px 0;color:#64748b;font-size:11px;'
+            f'font-family:Arial,sans-serif;">({esc(low.get("rating"))}/5) '
+            f'&ldquo;{esc(low.get("question", ""))}&rdquo;</td></tr>'
+            for low in fb.get("recent_low") or [])
+        quality_html = (
+            f'<tr><td style="padding:14px 24px;">'
+            f'<div style="font-size:12px;font-weight:700;color:#0f172a;'
+            f'text-transform:uppercase;letter-spacing:.08em;font-family:'
+            f'Arial,sans-serif;">Qualidade do Copiloto</div>'
+            f'<div style="padding-top:6px;font-size:13px;color:#334155;'
+            f'font-family:Arial,sans-serif;">'
+            f'<span style="color:#f59e0b;font-size:15px;">{stars}</span> '
+            f'<b>{avg:.1f}/5</b> ({esc(fb.get("total", 0))} avaliações)'
+            f'</div>'
+            f'<table role="presentation" width="100%" '
+            f'style="margin-top:4px;">{low_rows}</table>'
+            f'</td></tr>')
+
+    return f"""<!DOCTYPE html>
+<html lang="pt">
+<body style="margin:0;padding:0;background:#f1f5f9;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+ style="background:#f1f5f9;padding:24px 12px;">
+<tr><td align="center">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0"
+ style="max-width:600px;background:#ffffff;border-radius:12px;
+ overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,.08);">
+
+ <tr><td style="background:#1e3a8a;padding:26px 24px 22px;">
+   <div style="font-size:11px;color:#93c5fd;text-transform:uppercase;
+    letter-spacing:.12em;font-family:Arial,sans-serif;">
+    Copiloto Global · AuditAI</div>
+   <div style="font-size:21px;font-weight:700;color:#ffffff;padding-top:6px;
+    font-family:Arial,sans-serif;">Resumo {esc(period_label)}</div>
+   <div style="font-size:12px;color:#bfdbfe;padding-top:2px;
+    font-family:Arial,sans-serif;">Plataforma de Auditoria · {esc(generated)}</div>
+ </td></tr>
+
+ <tr><td style="padding:18px 24px 6px;">
+   <div style="background:#eff6ff;border-left:4px solid #1e3a8a;
+    border-radius:6px;padding:12px 14px;font-size:14px;font-weight:600;
+    color:#1e3a8a;font-family:Arial,sans-serif;">
+    {esc(digest.get("headline", ""))}</div>
+ </td></tr>
+
+ <tr><td style="padding:12px 24px 0;">
+   <div style="font-size:12px;font-weight:700;color:#0f172a;
+    text-transform:uppercase;letter-spacing:.08em;font-family:Arial,
+    sans-serif;">Indicadores-chave</div>
+   <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+    style="margin-top:8px;border-collapse:collapse;font-family:Arial,
+    sans-serif;">{kpi_rows}</table>
+ </td></tr>
+
+ <tr><td style="padding:14px 24px 4px;">
+   <div style="font-size:12px;font-weight:700;color:#0f172a;
+    text-transform:uppercase;letter-spacing:.08em;font-family:Arial,
+    sans-serif;">Sinais que precisam de atenção</div>
+   <table role="presentation" width="100%" style="margin-top:6px;">
+    {signals_html or '<tr><td style="color:#94a3b8;font-size:12px;font-family:Arial,sans-serif;padding:6px 0;">Sem sinais relevantes neste período.</td></tr>'}
+   </table>
+ </td></tr>
+
+ <tr><td style="padding:14px 24px 4px;">
+   <div style="font-size:12px;font-weight:700;color:#0f172a;
+    text-transform:uppercase;letter-spacing:.08em;font-family:Arial,
+    sans-serif;">Insights do Copiloto</div>
+   {insights_html or '<div style="color:#94a3b8;font-size:12px;padding-top:6px;font-family:Arial,sans-serif;">Sem insights neste período.</div>'}
+ </td></tr>
+
+ {quality_html}
+
+ <tr><td style="background:#f8fafc;border-top:1px solid #e2e8f0;
+  padding:14px 24px;">
+   <div style="font-size:11px;color:#94a3b8;font-family:Arial,sans-serif;
+    line-height:1.5;">
+    Gerado automaticamente pelo Copiloto Global em {esc(generated)}.<br>
+    PDF executivo em anexo · também disponível no dashboard (card
+    &ldquo;Digest Programado&rdquo;).</div>
+ </td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>"""
+
+
 def build_digest_pdf(digest: dict) -> bytes:
     """PDF executivo do digest (reportlab) — anexo do email e download
     no frontend. Composição: cabeçalho, headline, KPIs, sinais priorizados,
