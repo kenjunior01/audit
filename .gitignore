@@ -163,3 +163,8 @@ frontend/.next/
 frontend/node.zip
 frontend/node/
 frontend/tsconfig.tsbuildinfo
+
+# Exceções — aplicação web (a regra "lib/" acima apagava frontend/src/lib)
+!frontend/src/lib/
+!frontend/src/lib/**
+!requirements.txt

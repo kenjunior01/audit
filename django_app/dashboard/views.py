@@ -7,7 +7,9 @@ from django.utils import timezone
 from .models import Alert, Transaction, ContextProfile, RegulatoryRule, IntegrationSettings, AiFeedback, AuditCase, AuditCaseComment, AuditCaseAttachment, ContextDocument, RiskAgent, ExternalSystem, IngestedSignal, ReferenceList, ReferenceItem, ApiToken, RiskAgentLog, AIGovernanceEvent, AuditRule, WebhookEvent, ExternalActionTemplate, ExternalActionExecution, ExcelImportJob
 from .serializers import AlertSerializer, TransactionSerializer, ContextProfileSerializer, RegulatoryRuleSerializer, ContextDocumentSerializer, IntegrationSettingsSerializer, AuditCaseSerializer, AuditCaseCommentSerializer, AuditCaseAttachmentSerializer, RiskAgentSerializer, ExternalSystemSerializer, IngestedSignalSerializer, ReferenceListSerializer, ReferenceItemSerializer, RiskAgentLogSerializer, AIGovernanceEventSerializer, AuditRuleSerializer, WebhookEventSerializer, ExternalActionTemplateSerializer, ExternalActionExecutionSerializer
 from .auth import IsViewerOrAbove, IsAuditorOrAdmin
-from rest_framework.decorators import api_view, permission_classes, parser_classes
+from rest_framework.decorators import (api_view, permission_classes,
+                                        parser_classes,
+                                        authentication_classes)
 from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import AllowAny
 from django.views.decorators.csrf import csrf_exempt
@@ -2609,3 +2611,25 @@ def case_report(request, pk):
     if "error" in report:
         return Response(report, status=404)
     return Response(report)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+@authentication_classes([])
+def health(request):
+    """Health check público (para Docker/monitorização/CI smoke).
+    Verifica a ligação à base de dados sem expor informação sensível."""
+    from django.db import connection
+
+    db_ok = False
+    try:
+        with connection.cursor() as cur:
+            cur.execute("SELECT 1")
+            db_ok = cur.fetchone() is not None
+    except Exception:
+        db_ok = False
+    return Response({
+        "status": "ok" if db_ok else "degraded",
+        "db": db_ok,
+        "service": "audit-api",
+    })
