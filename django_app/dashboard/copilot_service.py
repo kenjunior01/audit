@@ -42,6 +42,13 @@ logger = logging.getLogger(__name__)
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("AUDIT_OLLAMA_MODEL", "deepseek-r1:1.5b")
 OLLAMA_TIMEOUT = float(os.environ.get("AUDIT_OLLAMA_TIMEOUT", "25"))
+# Sonda de disponibilidade do Ollama com cache negativo: quando o LLM está
+# em baixo (sobretudo URL remoto inacessível), evita que CADA pedido de chat
+# espere OLLAMA_TIMEOUT antes de degradar para o modo regras. Durante o TTL
+# de cooldown a sonda nem chega a contactar a rede; qualquer resposta 200
+# do Ollama reinicia o estado. 0 desativa o cooldown (sempre sonda).
+OLLAMA_PROBE_TTL = float(os.environ.get("AUDIT_OLLAMA_PROBE_TTL", "60"))
+_ollama_down_until = 0.0  # epoch até ao qual assumimos Ollama indisponível
 
 MAX_TOOLS_PER_QUESTION = 4
 TABLE_ROW_LIMIT = 10
@@ -1436,9 +1443,37 @@ def _tools_context(results: list) -> str:
     return "\n".join(parts)
 
 
+def ollama_available() -> bool:
+    """Sonda leve (GET /api/tags, 2.5 s) com cooldown negativo.
+
+    Durante OLLAMA_PROBE_TTL segundos após uma falha, devolve False sem
+    contactar a rede — o chat degrada imediatamente para o modo regras em
+    vez de esperar OLLAMA_TIMEOUT em cada pedido. Nunca lança.
+    """
+    global _ollama_down_until
+    if OLLAMA_PROBE_TTL > 0 and time.time() < _ollama_down_until:
+        return False
+    try:
+        import requests
+        r = requests.get(f"{OLLAMA_URL.rstrip('/')}/api/tags", timeout=2.5)
+        if r.status_code == 200:
+            _ollama_down_until = 0.0
+            return True
+        logger.info("ollama probe http %s", r.status_code)
+    except Exception as e:
+        logger.info("ollama probe falhou: %s", e)
+    if OLLAMA_PROBE_TTL > 0:
+        _ollama_down_until = time.time() + OLLAMA_PROBE_TTL
+    return False
+
+
 def call_ollama_copilot(question: str, tool_results: list,
                         history: list = None) -> dict:
-    """Pede síntese JSON ao Ollama. Devolve dict validado ou None."""
+    """Pede síntese JSON ao Ollama. Devolve dict validado ou None.
+    Com sonda prévia: Ollama em cooldown de indisponibilidade → None
+    imediato (o pipeline segue em modo regras sem espera)."""
+    if not ollama_available():
+        return None
     try:
         import requests
         hist = ""
