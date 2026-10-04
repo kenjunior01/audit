@@ -1,0 +1,30 @@
+# Audit Platform — dependências Python
+# Instalar:  pip install -r requirements.txt
+
+Django>=4.2,<7.0
+djangorestframework>=3.14
+django-filter>=23.0
+django-cors-headers>=4.0
+
+# Banco de dados (descomente para PostgreSQL em produção)
+# psycopg2-binary>=2.9
+
+# Processamento assíncrono
+celery>=5.3
+redis>=5.0
+
+# Excel Studio (super auxílio de documentos)
+pandas>=2.0
+openpyxl>=3.1
+xlrd>=2.0.1
+numpy>=1.26
+python-dateutil>=2.8
+
+# IA / RAG
+requests>=2.31
+qdrant-client>=1.8
+# mem0>=0.0.9            # opcional: memória persistente
+# unsloth / torch        # opcional: fine-tuning DPO (ver train_dpo_unsloth.py)
+
+# Relatórios PDF
+reportlab>=4.0
