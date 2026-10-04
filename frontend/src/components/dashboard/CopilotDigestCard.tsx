@@ -64,6 +64,7 @@ export default function CopilotDigestCard() {
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [downloading, setDownloading] = useState(false)
+  const [previewing, setPreviewing] = useState(false)
   const [notice, setNotice] = useState('')
 
   const load = async () => {
@@ -101,6 +102,20 @@ export default function CopilotDigestCard() {
         `digest-${digest?.period || 'daily'}-${digest?.day || new Date().toISOString().slice(0, 10)}.pdf`)
     } catch { setNotice('Não foi possível descarregar o PDF.') }
     finally { setDownloading(false) }
+  }
+
+  const previewEmail = async () => {
+    setPreviewing(true)
+    setNotice('')
+    try {
+      const r = await apiFetch('/ai/copilot/digest/email/preview')
+      if (!r.ok) throw new Error()
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      window.open(url, '_blank', 'noopener')
+      setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    } catch { setNotice('Não foi possível abrir a pré-visualização do email.') }
+    finally { setPreviewing(false) }
   }
 
   useEffect(() => { load() }, [])
@@ -173,6 +188,11 @@ export default function CopilotDigestCard() {
               className="p-2 rounded-lg text-slate-400 hover:text-emerald-400 hover:bg-slate-800 disabled:opacity-40"
               title="Descarregar PDF executivo">
               {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
+            </button>
+            <button onClick={previewEmail} disabled={previewing}
+              className="p-2 rounded-lg text-slate-400 hover:text-sky-400 hover:bg-slate-800 disabled:opacity-40"
+              title="Pré-visualizar email HTML do digest">
+              {previewing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
             </button>
           </div>
         </div>

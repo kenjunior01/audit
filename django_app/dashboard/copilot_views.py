@@ -250,6 +250,40 @@ def copilot_digest_pdf(request):
     return resp
 
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def copilot_digest_email_preview(request):
+    """Pré-visualização do EMAIL HTML do digest no browser.
+    Mesma política do endpoint PDF: usa o digest guardado mais recente
+    (?period= opcional); se ainda não existir nenhum, gera o payload na
+    hora sem persistir. Devolve text/html para inspeção direta."""
+    from django.http import HttpResponse
+    from .models import CopilotDigest
+
+    period = str(request.query_params.get("period") or "")[:10]
+    qs = CopilotDigest.objects.all()
+    if period in ("daily", "weekly"):
+        qs = qs.filter(period=period)
+    row = qs.first()
+    if row:
+        digest = row.payload
+    else:
+        try:
+            digest = cs.build_digest(
+                period if period in ("daily", "weekly") else "daily")
+        except Exception as e:
+            return Response(
+                {"error": f"Não foi possível gerar o digest: {e}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    try:
+        html_body = cs.digest_email_html(digest)
+    except Exception as e:
+        logger.exception("copilot_digest_email_preview falhou")
+        return Response({"error": f"Não foi possível gerar o HTML: {e}"},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    return HttpResponse(html_body, content_type="text/html; charset=utf-8")
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def copilot_act(request):

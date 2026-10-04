@@ -177,15 +177,22 @@ def send_copilot_digest(period="daily", send_email=True):
         except Exception as e:
             logger.warning("digest pdf falhou (email segue sem anexo): %s", e)
         try:
-            # EmailMessage (e não send_mail) para suportar anexo PDF
-            from django.core.mail import EmailMessage
-            email = EmailMessage(
+            # EmailMultiAlternatives (e não send_mail): texto simples +
+            # alternativa HTML premium + anexo PDF
+            from django.core.mail import EmailMultiAlternatives
+            email = EmailMultiAlternatives(
                 subject=f"[Audit] Resumo {period} — {digest['headline'][:80]}",
                 body=cs.digest_email_body(digest),
                 from_email=dj_settings.DEFAULT_FROM_EMAIL,
                 to=recipients,
                 attachments=attachments or None,
             )
+            try:
+                email.attach_alternative(cs.digest_email_html(digest),
+                                         "text/html")
+            except Exception as e:
+                logger.warning("digest html falhou (email segue texto "
+                               "simples): %s", e)
             email.send(fail_silently=False)
             status = "sent"
         except Exception as e:
