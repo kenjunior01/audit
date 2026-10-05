@@ -168,3 +168,9 @@ frontend/tsconfig.tsbuildinfo
 !frontend/src/lib/
 !frontend/src/lib/**
 !requirements.txt
+
+# App desktop — exceções às regras Python acima (build/ e dist/ globais)
+# mantêm o ícone da app no repo; artefactos reais continuam ignorados
+!desktop/build/
+!desktop/build/**
+!desktop-backend/*.spec

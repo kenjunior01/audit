@@ -1,0 +1,64 @@
+{
+  "name": "auditai-desktop",
+  "version": "1.0.0",
+  "description": "AuditAI — Plataforma de Auditoria com Excel Super Assistente e Copiloto Global (app desktop)",
+  "main": "main.js",
+  "author": "AuditAI",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "start:dev": "AUDIT_DESKTOP_DEV=1 electron .",
+    "dist": "electron-builder --publish never",
+    "dist:dir": "electron-builder --dir --publish never"
+  },
+  "devDependencies": {
+    "electron": "^31.3.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "pt.auditai.desktop",
+    "productName": "AuditAI",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/backend",
+        "to": "backend",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "resources/frontend",
+        "to": "frontend",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "icon": "build/icon.png",
+      "category": "Office"
+    },
+    "mac": {
+      "target": [{ "target": "dmg", "arch": ["x64"] }],
+      "icon": "build/icon.png",
+      "category": "public.app-category.finance"
+    }
+  }
+}
