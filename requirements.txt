@@ -28,3 +28,6 @@ qdrant-client>=1.8
 
 # Relatórios PDF
 reportlab>=4.0
+
+# Servidor WSGI (app desktop + alternativa ao gunicorn em Windows)
+waitress>=3.0
