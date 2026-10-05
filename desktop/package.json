@@ -5,6 +5,10 @@
   "main": "main.js",
   "author": "AuditAI",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kenjunior01/audit.git"
+  },
   "scripts": {
     "start": "electron .",
     "start:dev": "AUDIT_DESKTOP_DEV=1 electron .",

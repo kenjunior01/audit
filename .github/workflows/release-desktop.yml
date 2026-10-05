@@ -141,7 +141,10 @@ jobs:
         working-directory: desktop
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          # GH_TOKEN só em tags (publica na release da tag); em
+          # workflow_dispatch fica vazio para o electron-builder não tentar
+          # calcular metadados de update/publish (precisaria de repository).
+          GH_TOKEN: ${{ github.event_name == 'push' && github.token || '' }}
         run: |
           if [ -n "${{ github.ref_name }}" ] && [[ "${{ github.ref_name }}" == v* ]]; then
             npx electron-builder --publish always
