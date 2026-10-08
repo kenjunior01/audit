@@ -29,5 +29,8 @@ qdrant-client>=1.8
 # Relatórios PDF
 reportlab>=4.0
 
+# Documentação OpenAPI 3 (Swagger UI / Redoc)
+drf-spectacular>=0.27
+
 # Servidor WSGI (app desktop + alternativa ao gunicorn em Windows)
 waitress>=3.0

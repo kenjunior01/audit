@@ -45,7 +45,10 @@ jobs:
             dashboard.tests.test_excel_copilot \
             dashboard.tests.test_excel_studio \
             dashboard.tests.test_critical_flows \
-            dashboard.tests.test_health
+            dashboard.tests.test_health \
+            dashboard.tests.test_notifications \
+            dashboard.tests.test_audit_report \
+            dashboard.tests.test_observability
 
   frontend:
     name: Next.js — build

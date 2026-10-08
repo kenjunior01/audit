@@ -212,6 +212,13 @@ def ingest_external_data(request):
                     materiality=risk_score
                 )
 
+                # Central de Notificações — staff é avisado sobre alertas relevantes
+                try:
+                    from .notifications_service import notify_alert
+                    notify_alert(alert)
+                except Exception:
+                    pass
+
                 # Webhook Notification
                 if source.webhook_url:
                     try:
@@ -282,6 +289,18 @@ def trigger_agent_run(request, pk):
         # Update last triggered
         agent.last_triggered = timezone.now()
         agent.save()
+
+        # Central de Notificações — resultado da execução do agente
+        try:
+            from .notifications_service import notify_user
+            uid = str(getattr(getattr(request, 'user', None), 'id', '') or 'system')
+            sev = 'success' if finding else 'info'
+            notify_user(uid, 'agent.run',
+                        f"Agente '{agent.name}' executado",
+                        body=(str(finding)[:400] if finding else 'Execução concluída sem achados.'),
+                        route='/agents', severity=sev, meta={'agent_id': agent.pk})
+        except Exception:
+            pass
         
         return Response({
             'status': 'success',
@@ -1045,6 +1064,14 @@ class AuditCaseViewSet(viewsets.ModelViewSet):
     def perform_update(self, serializer):
         old_instance = self.get_object()
         case = serializer.save()
+        
+        # Central de Notificações — transição de estado do caso
+        try:
+            from .notifications_service import notify_case_status
+            actor = str(getattr(getattr(self.request, 'user', None), 'id', '') or '')
+            notify_case_status(case, old_instance.status, case.status, actor=actor)
+        except Exception:
+            pass
         
         # Enviar webhook de atualização
         try:
@@ -2096,7 +2123,7 @@ def process_pending_analysis(request):
                      status = 'False Positive'
                      description = f"[AUTO-RESOLVED] {description}"
                  
-                 Alert.objects.create(
+                 alert = Alert.objects.create(
                     transaction=txn,
                     alert_type='AI Risk Analysis',
                     severity=severity,
@@ -2106,6 +2133,12 @@ def process_pending_analysis(request):
                     amount=txn.amount,
                     materiality=risk_score
                 )
+                 # Central de Notificações — staff é avisado sobre alertas relevantes
+                 try:
+                     from .notifications_service import notify_alert
+                     notify_alert(alert)
+                 except Exception:
+                     pass
             
             txn.status = 'Analyzed'
             txn.save()

@@ -175,6 +175,17 @@ def excel_import(request):
             status="Completed",
             sheet=sheet_name,
         )
+        # Central de Notificações — importação concluída
+        try:
+            from .notifications_service import notify_user
+            sev = "success" if created else "warn"
+            notify_user(user_id, "excel.import",
+                        f"Importação concluída: {name}",
+                        body=f"{created} transações importadas, {duplicates} duplicados ignorados, "
+                             f"{len(skipped)} linhas inválidas.",
+                        route="/excel", severity=sev, meta={"job_id": job.id})
+        except Exception:
+            pass
         return Response({
             "job_id": job.id,
             "file": name,
