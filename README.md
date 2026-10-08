@@ -60,6 +60,29 @@ Dashboard executivo, alertas com severidade, casos com comentários/anexos/relat
 transações com inspetor, SLA, agents de investigação (LangGraph), governança de IA,
 regras, integrações/webhooks, riscos geográficos, gestão de referências.
 
+### Central de Notificações in-app
+
+Sino no header (todas as páginas) com contador de não lidas, polling a 60s,
+dropdown com severidades (info/sucesso/aviso/crítico), marcação individual/global
+e navegação direta para a origem. Eventos gerados automaticamente: alertas
+críticos/altos, transições de estado de casos, execuções de agentes, importações
+Excel e mais — via `notifications_service` (resiliente, com dedupe de 10 min).
+
+### Relatório Global de Auditoria (PDF)
+
+Documento formal gerado sobre dados vivos: capa confidencial, sumário executivo
+com KPIs, metodologia, análise de risco (distribuição por severidade, top
+fornecedores, Benford MAD, tendência 7d), achados principais, carteira de casos,
+qualidade de dados e recomendações determinísticas. Preview JSON no cartão do
+dashboard + download em `/api/reports/audit/pdf?days=30` (papel auditor/admin).
+
+### Observabilidade e documentação da API
+
+- `GET /django/api/metrics` — métricas em formato Prometheus (HTTP por rota/estado,
+  latência com buckets, gauges de domínio) via `MetricsMiddleware`, sem dependências.
+- OpenAPI 3: `/django/api/schema` + **Swagger UI** `/django/api/schema/swagger-ui`
+  + Redoc `/django/api/schema/redoc` (drf-spectacular) — link nas Configurações.
+
 ---
 
 ## Arranque rápido

@@ -1,5 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+from drf_spectacular.views import (SpectacularAPIView, SpectacularRedocView,
+                                   SpectacularSwaggerView)
 from .views import AlertViewSet, TransactionViewSet, export_alerts, export_transactions, upload_samples, process_pending_analysis, upload_document, my_profile, upsert_profile, analyze_regulation, analyze_news, wizard, RegulatoryRuleViewSet, fetch_news_sources, fetch_regulatory_sources, context_stats, forecast_risk, analyze_root_cause, geo_risks, suggest_rules, ContextDocumentViewSet, graph_analysis, IntegrationSettingsViewSet, ai_user_insights, submit_ai_feedback, audit_chat, execute_ai_action, health, AuditCaseViewSet, AuditCaseCommentViewSet, AuditCaseAttachmentViewSet, case_report, generate_case_report, RiskAgentViewSet, simulate_rule, audit_dashboard_stats, sla_stats, ExternalSystemViewSet, IngestedSignalViewSet, ingest_external_data, ReferenceListViewSet, ReferenceItemViewSet, auto_cluster_alerts, register_user, login_user, agent_investigation, executive_summary, RiskAgentLogViewSet, trigger_agent_run, AIGovernanceViewSet, AuditRuleViewSet, WebhookEventViewSet, ExternalActionTemplateViewSet, ExternalActionExecutionViewSet
 from .excel_views import excel_preview, excel_import, excel_analyze, excel_reconcile, excel_export, excel_assistant, excel_assistant_apply
 from .copilot_views import (copilot_chat, copilot_briefing, copilot_stream,
@@ -7,6 +9,10 @@ from .copilot_views import (copilot_chat, copilot_briefing, copilot_stream,
                             copilot_feedback_stats, copilot_digest,
                             copilot_digest_pdf, copilot_digest_email_preview,
                             copilot_act)
+from .notification_views import (notifications_list, notifications_unread_count,
+                                 notifications_mark_read)
+from .report_views import audit_report_summary_view, audit_report_pdf_view
+from .observability import metrics_view
 
 router = DefaultRouter()
 router.register(r'governance', AIGovernanceViewSet, basename='governance')
@@ -91,4 +97,24 @@ urlpatterns = [
     path('ai/copilot/digest/email/preview', copilot_digest_email_preview,
          name='copilot_digest_email_preview'),
     path('ai/copilot/act', copilot_act, name='copilot_act'),
+
+    # Central de Notificações in-app
+    path('notifications', notifications_list, name='notifications_list'),
+    path('notifications/unread-count', notifications_unread_count,
+         name='notifications_unread_count'),
+    path('notifications/read', notifications_mark_read, name='notifications_mark_read'),
+
+    # Relatório Global de Auditoria (JSON preview + PDF premium)
+    path('reports/audit', audit_report_summary_view, name='audit_report_summary'),
+    path('reports/audit/pdf', audit_report_pdf_view, name='audit_report_pdf'),
+
+    # Observabilidade — métricas formato Prometheus
+    path('metrics', metrics_view, name='metrics'),
+
+    # Documentação OpenAPI 3
+    path('schema', SpectacularAPIView.as_view(), name='schema'),
+    path('schema/swagger-ui', SpectacularSwaggerView.as_view(url_name='schema'),
+         name='swagger_ui'),
+    path('schema/redoc', SpectacularRedocView.as_view(url_name='schema'),
+         name='redoc'),
 ]

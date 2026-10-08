@@ -298,6 +298,28 @@ export default function SettingsPage() {
         <TabButton id="rules" label="Regras de Auditoria" icon={AlertTriangle} active={activeTab} onClick={setActiveTab} />
       </div>
 
+      {/* Documentação da API — OpenAPI/Swagger */}
+      <div className="bg-gradient-to-r from-slate-50 to-indigo-50 dark:from-slate-900 dark:to-indigo-950/40
+                      border border-indigo-100 dark:border-indigo-900 rounded-xl p-4 flex items-center justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Documentação da API</h3>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+            Esquema OpenAPI 3 interativo — integração de sistemas externos e automação via token.
+          </p>
+        </div>
+        <div className="flex gap-2 shrink-0">
+          <a href="/api/schema/swagger-ui" target="_blank" rel="noreferrer"
+             className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium transition-colors">
+            Swagger UI
+          </a>
+          <a href="/api/schema/redoc" target="_blank" rel="noreferrer"
+             className="px-3 py-1.5 rounded-lg border border-indigo-300 dark:border-indigo-700 text-indigo-600
+                        dark:text-indigo-300 text-xs font-medium hover:bg-indigo-50 dark:hover:bg-indigo-950 transition-colors">
+            Redoc
+          </a>
+        </div>
+      </div>
+
       {/* Content */}
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 min-h-[400px]">
         {loading && <div className="absolute top-0 left-0 w-full h-1 bg-indigo-100 dark:bg-gray-700 overflow-hidden"><div className="h-full bg-indigo-600 animate-progress"></div></div>}

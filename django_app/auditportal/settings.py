@@ -17,6 +17,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'django_filters',
     'corsheaders',
+    'drf_spectacular',   # documentação OpenAPI 3 (Swagger/Redoc)
     'dashboard',
 ]
 
@@ -24,6 +25,7 @@ MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.middleware.gzip.GZipMiddleware',  # boost de performance: respostas comprimidas (streaming é ignorado automaticamente)
+    'dashboard.observability.MetricsMiddleware',  # observabilidade: counters HTTP/latência (formato Prometheus em /metrics)
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -121,6 +123,7 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'DEFAULT_FILTER_BACKENDS': (
         'django_filters.rest_framework.DjangoFilterBackend',
     ),
@@ -141,6 +144,17 @@ CORS_ALLOWED_ORIGINS = [
     o.strip() for o in os.environ.get('AUDIT_CORS_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000').split(',')
     if o.strip()
 ]
+
+# OpenAPI 3 — Swagger UI (/api/schema/swagger-ui) e Redoc (/api/schema/redoc)
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'AuditAI Omni API',
+    'DESCRIPTION': 'API da plataforma de auditoria inteligente — alertas, transações, '
+                   'casos, Excel Studio, Copiloto IA, notificações e relatórios.',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'COMPONENT_SPLIT_REQUEST': True,
+    'DISABLE_ERRORS_AND_WARNINGS': os.environ.get('AUDIT_SPECTACULAR_QUIET', 'True').lower() in ('1', 'true', 'yes'),
+}
 
 # --- Segurança (hardening) ------------------------------------------------
 SECURE_CONTENT_TYPE_NOSNIFF = True

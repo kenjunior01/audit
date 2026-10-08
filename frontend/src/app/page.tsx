@@ -10,6 +10,7 @@ import AIExecutiveSummary from '@/components/dashboard/AIExecutiveSummary'
 import AIGovernanceDashboard from '@/components/dashboard/AIGovernanceDashboard'
 import CopilotBriefingCard from '@/components/dashboard/CopilotBriefingCard'
 import CopilotDigestCard from '@/components/dashboard/CopilotDigestCard'
+import AuditReportCard from '@/components/dashboard/AuditReportCard'
 
 type Stats = {
   total_transactions: number
@@ -114,6 +115,8 @@ export default function DashboardPage() {
       </div>
 
       <CopilotBriefingCard />
+
+      <AuditReportCard />
 
       <CopilotDigestCard />
       

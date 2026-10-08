@@ -3,6 +3,7 @@ import '../styles/globals.css'
 import type { ReactNode } from 'react'
 import { CommandDock } from '@/components/layout/CommandDock'
 import { CopilotDock } from '@/components/layout/copilot-dock'
+import { NotificationBell } from '@/components/layout/notifications-bell'
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
@@ -23,6 +24,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                  </h1>
               </div>
               <div className="flex items-center gap-4">
+                 <NotificationBell />
                  <div className="text-sm text-slate-500">
                     System Status: <span className="text-emerald-500 font-medium">Online</span>
                  </div>

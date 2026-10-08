@@ -580,3 +580,44 @@ class CopilotDigest(models.Model):
 
     def __str__(self):
         return f"Digest {self.period} {self.day} ({self.status})"
+
+
+class Notification(models.Model):
+    """Notificação in-app — canal unificado de eventos da plataforma.
+
+    destinatário segue a convenção da plataforma: user_id (string) do
+    ApiToken (email/username), à semelhança de created_by/assigned_to.
+    """
+    SEVERITY_CHOICES = [
+        ('info', 'Informação'),
+        ('success', 'Sucesso'),
+        ('warn', 'Aviso'),
+        ('critical', 'Crítico'),
+    ]
+    recipient = models.CharField(max_length=128, db_index=True)
+    kind = models.CharField(max_length=64)  # ex: alert.created, case.status, agent.run, digest.ready, excel.import
+    severity = models.CharField(max_length=16, choices=SEVERITY_CHOICES, default='info')
+    title = models.CharField(max_length=220)
+    body = models.TextField(blank=True, default='')
+    route = models.CharField(max_length=200, blank=True, default='')  # rota do frontend, ex: /alerts
+    meta = models.JSONField(null=True, blank=True)
+    read_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['recipient', 'read_at'], name='dashboard_notif_recipient_idx'),
+        ]
+
+    def mark_read(self):
+        if not self.read_at:
+            self.read_at = timezone.now()
+            self.save(update_fields=['read_at'])
+
+    @property
+    def is_unread(self):
+        return self.read_at is None
+
+    def __str__(self):
+        return f"[{self.severity}] {self.title} → {self.recipient}"
