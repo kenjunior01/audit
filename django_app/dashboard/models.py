@@ -621,3 +621,63 @@ class Notification(models.Model):
 
     def __str__(self):
         return f"[{self.severity}] {self.title} → {self.recipient}"
+
+
+class BIMeasure(models.Model):
+    """Medida BI nomeada (estilo DAX) — expressão JSON avaliada pelo bi_service."""
+    name = models.CharField(max_length=120, unique=True)
+    description = models.CharField(max_length=300, blank=True, default='')
+    expression = models.JSONField()
+    format = models.CharField(max_length=32, blank=True, default='')
+    created_by = models.CharField(max_length=128, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return f"Medida {self.name}"
+
+
+class ETLPipeline(models.Model):
+    """Pipeline ETL estilo Power Query — receita de 'applied steps' re-executável."""
+    name = models.CharField(max_length=120, unique=True)
+    description = models.CharField(max_length=300, blank=True, default='')
+    steps = models.JSONField(default=list, blank=True)  # [{op, ...}, ...]
+    created_by = models.CharField(max_length=128, blank=True, default='')
+    run_count = models.IntegerField(default=0)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    last_run_rows = models.IntegerField(default=0)
+    last_run_imported = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Pipeline {self.name} ({len(self.steps)} passos)"
+
+
+class RLSRule(models.Model):
+    """Row-Level Security (estilo Power BI): filtra a fonte por dimensão.
+
+    Aplica-se por user_id (email/token) OU por role; valores permitidos por
+    dimensão (vendor/category/status/currency/user_id). Regras inativas são
+    ignoradas; sem regras → sem restrição.
+    """
+    name = models.CharField(max_length=120)
+    user_id = models.CharField(max_length=128, blank=True, default='')
+    role = models.CharField(max_length=32, blank=True, default='')  # viewer|auditor|admin
+    dimension = models.CharField(max_length=32)  # vendor|category|status|currency|user_id
+    allowed_values = models.JSONField(default=list)
+    active = models.BooleanField(default=True)
+    created_by = models.CharField(max_length=128, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        target = self.user_id or f"role:{self.role}"
+        return f"RLS {self.name}: {target} → {self.dimension}"
