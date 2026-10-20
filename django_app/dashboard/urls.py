@@ -13,6 +13,11 @@ from .notification_views import (notifications_list, notifications_unread_count,
                                  notifications_mark_read)
 from .report_views import audit_report_summary_view, audit_report_pdf_view
 from .observability import metrics_view
+from .bi_views import (bi_measures, bi_measure_delete, bi_dimensions,
+                       bi_evaluate, bi_group, bi_matrix, bi_pareto,
+                       bi_decompose, bi_whatif, bi_drillthrough,
+                       bi_pipelines, bi_pipeline_delete, bi_pipeline_run,
+                       bi_rls, bi_rls_detail)
 
 router = DefaultRouter()
 router.register(r'governance', AIGovernanceViewSet, basename='governance')
@@ -110,6 +115,23 @@ urlpatterns = [
 
     # Observabilidade — métricas formato Prometheus
     path('metrics', metrics_view, name='metrics'),
+
+    # BI Studio — Power BI parity (REA)
+    path('bi/measures', bi_measures, name='bi_measures'),
+    path('bi/measures/<int:pk>', bi_measure_delete, name='bi_measure_delete'),
+    path('bi/meta', bi_dimensions, name='bi_meta'),
+    path('bi/evaluate', bi_evaluate, name='bi_evaluate'),
+    path('bi/group', bi_group, name='bi_group'),
+    path('bi/matrix', bi_matrix, name='bi_matrix'),
+    path('bi/pareto', bi_pareto, name='bi_pareto'),
+    path('bi/decompose', bi_decompose, name='bi_decompose'),
+    path('bi/whatif', bi_whatif, name='bi_whatif'),
+    path('bi/drillthrough', bi_drillthrough, name='bi_drillthrough'),
+    path('bi/pipelines', bi_pipelines, name='bi_pipelines'),
+    path('bi/pipelines/<int:pk>', bi_pipeline_delete, name='bi_pipeline_delete'),
+    path('bi/pipelines/<int:pk>/run', bi_pipeline_run, name='bi_pipeline_run'),
+    path('bi/rls', bi_rls, name='bi_rls'),
+    path('bi/rls/<int:pk>', bi_rls_detail, name='bi_rls_detail'),
 
     # Documentação OpenAPI 3
     path('schema', SpectacularAPIView.as_view(), name='schema'),

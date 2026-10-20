@@ -5,6 +5,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { motion, AnimatePresence } from "framer-motion"
 import { 
+  BarChart3,
   LayoutDashboard, 
   Search, 
   ShieldAlert, 
@@ -37,6 +38,7 @@ const menuItems = [
   { path: "/assistant", label: "Audit AI", icon: Bot },
   { path: "/agents", label: "Agentes", icon: Users },
   { path: "/excel", label: "Excel Studio", icon: FileSpreadsheet },
+  { path: "/bi", label: "BI Studio", icon: BarChart3 },
   { type: "divider" },
   { path: "/graph", label: "Conexões", icon: Network },
   { path: "/geo-risk", label: "Geo Risco", icon: Map },

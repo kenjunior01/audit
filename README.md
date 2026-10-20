@@ -83,6 +83,31 @@ dashboard + download em `/api/reports/audit/pdf?days=30` (papel auditor/admin).
 - OpenAPI 3: `/django/api/schema` + **Swagger UI** `/django/api/schema/swagger-ui`
   + Redoc `/django/api/schema/redoc` (drf-spectacular) — link nas Configurações.
 
+### BI Studio — Power BI parity via metodologia REA
+
+Aplicámos o método **REA (Reverse Engineer Anything)** — escolher o alvo,
+preparar o ambiente, **compreender antes de construir** (com evidências),
+iterar nos detalhes e **ir além do original** — com o Power BI como alvo
+principal (e Tableau, Alteryx, Power Query e IDEA/ACL como secundários).
+Resultado, na página **BI Studio** (`/bi`):
+
+| Capacidade do mercado | Implementação nossa |
+|---|---|
+| DAX (medidas + filter context) | Motor `bi_service.py`: árvore de expressão JSON com whitelist fechada — `agg` (sum/avg/count/nunique/min/max/median), `calc` (CALCULATE), `ratio/diff/add/mul`, `yoy/mom` (time-intelligence), `pct_of_total`, `running_total`, `const` |
+| Matrix visual | `/bi/matrix` — pivot dinâmico com margens de linha/coluna e totais |
+| Decomposition Tree | `/bi/decompose` — contribuição hierárquica nível a nível com % do pai |
+| What-if parameters | `/bi/whatif` — cenário base vs. ajustado com slider |
+| Pareto 80/20 | `/bi/pareto` — vital few vs. trivial many com linha acumulada |
+| Drillthrough | `/bi/drillthrough` — transações sob qualquer ponto do visual (clique) |
+| Power Query (applied steps) | `ETLPipeline` — receita ETL re-executável (12 operações: map_columns fuzzy, filter, derive, dedupe, fillna, cast, sort, dropna, select, upper_headers, trim_text, rename) com log por passo e importação idempotente |
+| RLS (Row-Level Security) | Modelo `RLSRule` + enforcement na fonte do motor (por user_id ou role, por dimensão) |
+| Tableau LOD | `group_measure` por qualquer dimensão temporal (month/quarter/weekday/date) ou categórica |
+| Alteryx workflow | Pipelines CRUD + execução com ficheiro + pré-visualização |
+| Q&A em linguagem natural | **Vamos além**: o Copiloto Global responde sobre os mesmos dados vivos com 14 tools |
+
+Medidas podem ser guardadas (`BIMeasure`) e reutilizadas; tudo respeita RLS
+e as permissões por papel (viewer consulta; auditor/admin gere).
+
 ---
 
 ## Arranque rápido
