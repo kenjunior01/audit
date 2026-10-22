@@ -25,11 +25,13 @@ import {
   ShieldCheck,
   Link2,
   Power,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Sparkles
 } from "lucide-react"
 
 const menuItems = [
   { path: "/", label: "Visão Geral", icon: LayoutDashboard },
+  { path: "/studio", label: "Painel Auto", icon: Sparkles },
   { path: "/transactions", label: "Inspeção", icon: Search },
   { path: "/alerts", label: "Riscos", icon: ShieldAlert },
   { path: "/governance", label: "Governança AI", icon: ShieldCheck },

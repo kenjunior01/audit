@@ -18,6 +18,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
 
 from .auth import IsAuditorOrAdmin, IsViewerOrAbove
+from .bi_auto_service import auto_dashboard
 from .bi_export_service import export_visual_xlsx
 from .bi_qa_service import ask_question
 from .bi_service import (BIValidationError, DIMENSIONS, anomaly_view,
@@ -801,3 +802,28 @@ def bi_alerts_run(request):
         results.append({'id': a.id, 'name': a.name, 'state': state,
                         'value': value, 'notified': notified})
     return Response({'evaluated': len(results), 'results': results})
+
+
+# ------------------------------------------------------------ auto painel
+
+@api_view(['POST'])
+@permission_classes([IsViewerOrAbove])
+@throttle_classes([UserRateThrottle])
+def bi_auto(request):
+    """Painel automático de 1 clique (método REA): o motor faz engenharia
+    reversa do dataset — deduz dimensões, medida e hierarquia — e devolve
+    KPIs, visuais e insights narrativos prontos a ver, sem configuração.
+
+    Body opcional: {"filters": [{field, op, value}]} (mesma gramática do BI).
+    """
+    d = request.data if isinstance(request.data, dict) else {}
+    filters = d.get('filters') or []
+    if not isinstance(filters, list):
+        return Response({'error': "'filters' deve ser uma lista"}, status=400)
+    try:
+        for f in filters:
+            _validate_filter(f)
+        return Response(auto_dashboard(filters=filters, user_id=_uid(request),
+                                       role=_role(request)))
+    except BIValidationError as e:
+        return _bi_error(e)

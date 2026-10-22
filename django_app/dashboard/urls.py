@@ -17,7 +17,7 @@ from .bi_views import (bi_measures, bi_measure_delete, bi_dimensions,
                        bi_evaluate, bi_group, bi_matrix, bi_pareto,
                        bi_decompose, bi_whatif, bi_drillthrough,
                        bi_pipelines, bi_pipeline_delete, bi_pipeline_run,
-                       bi_rls, bi_rls_detail,
+                       bi_rls, bi_rls_detail, bi_auto,
                        bi_visual, bi_series, bi_forecast, bi_anomaly,
                        bi_waterfall, bi_funnel, bi_scatter, bi_kpi,
                        bi_dashboards, bi_dashboard_detail, bi_dashboard_run,
@@ -122,6 +122,7 @@ urlpatterns = [
     path('metrics', metrics_view, name='metrics'),
 
     # BI Studio — Power BI parity (REA)
+    path('bi/auto', bi_auto, name='bi_auto'),
     path('bi/measures', bi_measures, name='bi_measures'),
     path('bi/measures/<int:pk>', bi_measure_delete, name='bi_measure_delete'),
     path('bi/meta', bi_dimensions, name='bi_meta'),
