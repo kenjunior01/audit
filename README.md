@@ -101,12 +101,28 @@ Resultado, na página **BI Studio** (`/bi`):
 | Drillthrough | `/bi/drillthrough` — transações sob qualquer ponto do visual (clique) |
 | Power Query (applied steps) | `ETLPipeline` — receita ETL re-executável (12 operações: map_columns fuzzy, filter, derive, dedupe, fillna, cast, sort, dropna, select, upper_headers, trim_text, rename) com log por passo e importação idempotente |
 | RLS (Row-Level Security) | Modelo `RLSRule` + enforcement na fonte do motor (por user_id ou role, por dimensão) |
-| Tableau LOD | `group_measure` por qualquer dimensão temporal (month/quarter/weekday/date) ou categórica |
+| Tableau LOD | `group_measure` por qualquer dimensão temporal (month/quarter/weekday/date/week) ou categórica |
 | Alteryx workflow | Pipelines CRUD + execução com ficheiro + pré-visualização |
 | Q&A em linguagem natural | **Vamos além**: o Copiloto Global responde sobre os mesmos dados vivos com 14 tools |
 
 Medidas podem ser guardadas (`BIMeasure`) e reutilizadas; tudo respeita RLS
 e as permissões por papel (viewer consulta; auditor/admin gere).
+
+#### BI Studio v2 — relatórios interativos, Q&A e alertas (iteração REA "ir além")
+
+| Capacidade do mercado | Implementação v2 |
+|---|---|
+| Relatórios multi-visual (canvas do Power BI) | Modelo `BIDashboard` — visuais fixados + slicers partilhados; execução numa só chamada (`/bi/dashboards/:id/run`) com **cross-filtering** por clique |
+| Séries temporais + analytics pane | `/bi/series` — granularidades day/week/month/quarter/year + média móvel + acumulado |
+| Forecast | `/bi/forecast` — tendência linear (mínimos quadrados) com intervalo ±σ para N períodos |
+| Deteção de anomalias | `/bi/anomaly` — z-score da série com limiar configurável (1.0–5.0) |
+| Waterfall | `/bi/waterfall` — contribuição incremental por membro até ao total |
+| Funnel | `/bi/funnel` — fases com conversão fase-a-fase e % da 1ª fase |
+| Scatter com quadrantes | `/bi/scatter` — duas medidas por dimensão + correlação de Pearson |
+| KPI com alvo | `/bi/kpi` — valor vs. alvo, estado on_track/warn/critical e tendência 30d |
+| Q&A visual (Copilot) | `/bi/qa` — "Pergunte aos dados": parser determinístico PT/EN (agregação, dimensão, tempo, fornecedor, estado, top N, modo) → visual executado + especificação auditável |
+| Export data com formatação | `/bi/export/xlsx` — Excel com título, cabeçalho estilizado, formatos numéricos, escala de cor condicional, totais, autofilter e painéis congelados |
+| Data alerts | Modelo `MeasureAlert` + `/bi/alerts/run` — avalia medidas e notifica a Central de Notificações na transição para breach (severity warn/critical) |
 
 ---
 

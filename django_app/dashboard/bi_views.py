@@ -1,7 +1,14 @@
 """Endpoints do BI Studio — Power BI parity (REA Fase 4) + integração com o
-Copiloto (Fase 5: tudo consultável em linguagem natural via tools existentes)."""
+Copiloto (Fase 5: tudo consultável em linguagem natural via tools existentes).
+
+v2 (iteração REA): Relatórios guardados com cross-filtering, Q&A em linguagem
+natural, inteligência temporal (séries/forecast/anomalias), novos visuais
+(waterfall/funnel/scatter/KPI), alertas de medidas com notificações e
+exportação Excel formatada.
+"""
 import json
 
+from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import (api_view, parser_classes,
@@ -11,13 +18,21 @@ from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
 
 from .auth import IsAuditorOrAdmin, IsViewerOrAbove
-from .bi_service import (BIValidationError, decompose_view, drillthrough_view,
-                         group_measure, matrix_view, pareto_view,
-                         run_measure, what_if_view)
+from .bi_export_service import export_visual_xlsx
+from .bi_qa_service import ask_question
+from .bi_service import (BIValidationError, DIMENSIONS, anomaly_view,
+                         decompose_view, drillthrough_view, forecast_view,
+                         funnel_view, group_measure, kpi_view, matrix_view,
+                         pareto_view, run_measure, scatter_view, series_view,
+                         what_if_view, waterfall_view,
+                         _validate as validate_measure,
+                         _validate_filter)
 from .excel_service import read_uploaded_file, pick_best_sheet, standardize_frame
 from .etl_service import apply_pipeline
-from .models import BIMeasure, ETLPipeline, ExcelImportJob, RLSRule, Transaction
+from .models import (BIDashboard, BIMeasure, ETLPipeline, ExcelImportJob,
+                     MeasureAlert, RLSRule, Transaction)
 from .notification_views import _recipient  # mesma lógica de identidade
+from .notifications_service import notify_user
 
 
 def _uid(request):
@@ -342,3 +357,447 @@ def bi_rls_detail(request, pk):
     r.save(update_fields=['active', 'allowed_values'])
     return Response({'id': r.id, 'active': r.active,
                      'allowed_values': r.allowed_values})
+
+
+# ---------------------------------------------------------------- visuais v2
+
+VISUAL_KINDS = {'bar', 'line', 'pie', 'series', 'pareto', 'matrix', 'decompose',
+                'whatif', 'waterfall', 'funnel', 'scatter', 'kpi', 'anomaly',
+                'forecast'}
+
+
+def _run_visual(kind, spec, filters, user_id, role):
+    """Dispatcher: kind + spec → dados do visual (usado no explorador e nos
+    relatórios guardados para garantir comportamento idêntico)."""
+    measure = spec.get('measure')
+    dimension = spec.get('dimension')
+    kw = {'filters': filters, 'user_id': user_id, 'role': role}
+    if kind in ('bar', 'pie', 'line'):
+        return group_measure(measure, dimension, top_n=spec.get('top_n', 20),
+                             mode=spec.get('mode', 'plain'), **kw)
+    if kind == 'series':
+        return series_view(measure, granularity=spec.get('granularity', 'month'),
+                           window=spec.get('window', 3), **kw)
+    if kind == 'pareto':
+        return pareto_view(measure, dimension, **kw)
+    if kind == 'matrix':
+        return matrix_view(measure, spec.get('rows', dimension),
+                           spec.get('cols', 'month'), **kw)
+    if kind == 'decompose':
+        return decompose_view(measure, spec.get('dimensions') or [dimension],
+                              **kw)
+    if kind == 'whatif':
+        return what_if_view(measure, spec.get('adjustment_pct', 0), **kw)
+    if kind == 'waterfall':
+        return waterfall_view(measure, dimension, **kw)
+    if kind == 'funnel':
+        return funnel_view(measure, dimension, **kw)
+    if kind == 'scatter':
+        return scatter_view(spec.get('measure_x') or measure,
+                            spec.get('measure_y') or measure, dimension, **kw)
+    if kind == 'kpi':
+        return kpi_view(measure, target=spec.get('target'), **kw)
+    if kind == 'anomaly':
+        return anomaly_view(measure, granularity=spec.get('granularity', 'month'),
+                            z_threshold=spec.get('z_threshold', 2.5), **kw)
+    if kind == 'forecast':
+        return forecast_view(measure, granularity=spec.get('granularity', 'month'),
+                             periods=spec.get('periods', 3), **kw)
+    raise BIValidationError(f"tipo de visual desconhecido: {kind}")
+
+
+def _validate_visual_spec(v):
+    if not isinstance(v, dict) or v.get('kind') not in VISUAL_KINDS:
+        raise BIValidationError(f"visual: 'kind' inválido ({v.get('kind') if isinstance(v, dict) else v})")
+    validate_measure(v.get('measure'))
+    if v.get('kind') == 'scatter' and v.get('measure_y'):
+        validate_measure(v['measure_y'])
+    for f in v.get('filters', []) or []:
+        _validate_filter(f)
+    if v.get('dimension') and v['dimension'] not in DIMENSIONS:
+        raise BIValidationError(f"visual: dimensão inválida {v['dimension']}")
+
+
+@api_view(['POST'])
+@permission_classes([IsViewerOrAbove])
+@throttle_classes([UserRateThrottle])
+def bi_visual(request):
+    """Executa um visual genérico pelo dispatcher (bar/series/waterfall/...)."""
+    data = request.data if isinstance(request.data, dict) else {}
+    try:
+        _validate_visual_spec(data)
+        payload = _run_visual(data['kind'], data, data.get('filters'),
+                              _uid(request), _role(request))
+        return Response({'kind': data['kind'], 'data': payload})
+    except BIValidationError as e:
+        return _bi_error(e)
+
+
+@api_view(['POST'])
+@permission_classes([IsViewerOrAbove])
+@throttle_classes([UserRateThrottle])
+def bi_series(request):
+    data = request.data if isinstance(request.data, dict) else {}
+    try:
+        return Response(series_view(
+            data.get('measure'), granularity=data.get('granularity', 'month'),
+            window=data.get('window', 3), filters=data.get('filters'),
+            user_id=_uid(request), role=_role(request)))
+    except BIValidationError as e:
+        return _bi_error(e)
+
+
+@api_view(['POST'])
+@permission_classes([IsViewerOrAbove])
+@throttle_classes([UserRateThrottle])
+def bi_forecast(request):
+    data = request.data if isinstance(request.data, dict) else {}
+    try:
+        return Response(forecast_view(
+            data.get('measure'), granularity=data.get('granularity', 'month'),
+            periods=data.get('periods', 3), filters=data.get('filters'),
+            user_id=_uid(request), role=_role(request)))
+    except BIValidationError as e:
+        return _bi_error(e)
+
+
+@api_view(['POST'])
+@permission_classes([IsViewerOrAbove])
+@throttle_classes([UserRateThrottle])
+def bi_anomaly(request):
+    data = request.data if isinstance(request.data, dict) else {}
+    try:
+        return Response(anomaly_view(
+            data.get('measure'), granularity=data.get('granularity', 'month'),
+            z_threshold=data.get('z_threshold', 2.5), filters=data.get('filters'),
+            user_id=_uid(request), role=_role(request)))
+    except BIValidationError as e:
+        return _bi_error(e)
+
+
+@api_view(['POST'])
+@permission_classes([IsViewerOrAbove])
+@throttle_classes([UserRateThrottle])
+def bi_waterfall(request):
+    data = request.data if isinstance(request.data, dict) else {}
+    try:
+        return Response(waterfall_view(
+            data.get('measure'), data.get('dimension'), filters=data.get('filters'),
+            user_id=_uid(request), role=_role(request)))
+    except BIValidationError as e:
+        return _bi_error(e)
+
+
+@api_view(['POST'])
+@permission_classes([IsViewerOrAbove])
+@throttle_classes([UserRateThrottle])
+def bi_funnel(request):
+    data = request.data if isinstance(request.data, dict) else {}
+    try:
+        return Response(funnel_view(
+            data.get('measure'), data.get('dimension'), filters=data.get('filters'),
+            user_id=_uid(request), role=_role(request)))
+    except BIValidationError as e:
+        return _bi_error(e)
+
+
+@api_view(['POST'])
+@permission_classes([IsViewerOrAbove])
+@throttle_classes([UserRateThrottle])
+def bi_scatter(request):
+    data = request.data if isinstance(request.data, dict) else {}
+    try:
+        return Response(scatter_view(
+            data.get('measure_x'), data.get('measure_y'), data.get('dimension'),
+            filters=data.get('filters'), user_id=_uid(request),
+            role=_role(request)))
+    except BIValidationError as e:
+        return _bi_error(e)
+
+
+@api_view(['POST'])
+@permission_classes([IsViewerOrAbove])
+@throttle_classes([UserRateThrottle])
+def bi_kpi(request):
+    data = request.data if isinstance(request.data, dict) else {}
+    try:
+        return Response(kpi_view(
+            data.get('measure'), target=data.get('target'),
+            filters=data.get('filters'), user_id=_uid(request),
+            role=_role(request)))
+    except BIValidationError as e:
+        return _bi_error(e)
+
+
+# ---------------------------------------------------------------- relatórios
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsViewerOrAbove])
+@throttle_classes([UserRateThrottle])
+def bi_dashboards(request):
+    if request.method == 'GET':
+        data = [{'id': d.id, 'name': d.name, 'description': d.description,
+                 'config': d.config, 'created_by': d.created_by,
+                 'updated_at': d.updated_at} for d in BIDashboard.objects.all()]
+        return Response({'results': data, 'count': len(data)})
+    if _role(request) not in ('auditor', 'admin'):
+        return Response({'error': 'requer auditor/admin'}, status=status.HTTP_403_FORBIDDEN)
+    d = request.data if isinstance(request.data, dict) else {}
+    name = (d.get('name') or '').strip()
+    config = d.get('config')
+    if not name:
+        return Response({'error': 'name é obrigatório'}, status=400)
+    if not isinstance(config, dict):
+        return Response({'error': 'config deve ser objeto'}, status=400)
+    visuals = config.get('visuals') or []
+    if not isinstance(visuals, list) or not (1 <= len(visuals) <= 12):
+        return Response({'error': 'config.visuals: lista de 1..12 visuais'}, status=400)
+    try:
+        for v in visuals:
+            _validate_visual_spec(v)
+        for s in config.get('slicers', []) or []:
+            _validate_filter(s)
+    except BIValidationError as e:
+        return _bi_error(e)
+    if BIDashboard.objects.filter(name=name).exists():
+        return Response({'error': f"relatório '{name}' já existe"}, status=409)
+    obj = BIDashboard.objects.create(name=name,
+                                     description=d.get('description', ''),
+                                     config=config, created_by=_uid(request))
+    return Response({'id': obj.id, 'name': obj.name}, status=status.HTTP_201_CREATED)
+
+
+@api_view(['GET', 'PUT', 'DELETE'])
+@permission_classes([IsViewerOrAbove])
+@throttle_classes([UserRateThrottle])
+def bi_dashboard_detail(request, pk):
+    try:
+        obj = BIDashboard.objects.get(pk=pk)
+    except BIDashboard.DoesNotExist:
+        return Response({'error': 'relatório não encontrado'}, status=404)
+    if request.method == 'DELETE':
+        if _role(request) not in ('auditor', 'admin'):
+            return Response({'error': 'requer auditor/admin'}, status=status.HTTP_403_FORBIDDEN)
+        obj.delete()
+        return Response({'deleted': pk})
+    if request.method == 'GET':
+        return Response({'id': obj.id, 'name': obj.name,
+                         'description': obj.description, 'config': obj.config,
+                         'created_by': obj.created_by, 'updated_at': obj.updated_at})
+    if _role(request) not in ('auditor', 'admin'):
+        return Response({'error': 'requer auditor/admin'}, status=status.HTTP_403_FORBIDDEN)
+    d = request.data if isinstance(request.data, dict) else {}
+    config = d.get('config')
+    if not isinstance(config, dict):
+        return Response({'error': 'config deve ser objeto'}, status=400)
+    try:
+        for v in config.get('visuals') or []:
+            _validate_visual_spec(v)
+    except BIValidationError as e:
+        return _bi_error(e)
+    obj.config = config
+    if d.get('description') is not None:
+        obj.description = d['description']
+    obj.save(update_fields=['config', 'description', 'updated_at'])
+    return Response({'id': obj.id, 'name': obj.name, 'updated_at': obj.updated_at})
+
+
+@api_view(['POST'])
+@permission_classes([IsViewerOrAbove])
+@throttle_classes([UserRateThrottle])
+def bi_dashboard_run(request, pk):
+    """Executa o relatório completo numa só chamada: cada visual é avaliado
+    com slicers partilhados + cross-filters do pedido (estilo interação do
+    Power BI). Erros por visual não abortam o relatório."""
+    try:
+        obj = BIDashboard.objects.get(pk=pk)
+    except BIDashboard.DoesNotExist:
+        return Response({'error': 'relatório não encontrado'}, status=404)
+    d = request.data if isinstance(request.data, dict) else {}
+    cross = d.get('cross_filters') or []
+    if not isinstance(cross, list):
+        cross = []
+    slicers = list((obj.config or {}).get('slicers') or [])
+    uid, role = _uid(request), _role(request)
+    out = []
+    for i, v in enumerate((obj.config or {}).get('visuals') or []):
+        vid = v.get('id') or f"v{i + 1}"
+        try:
+            _validate_visual_spec(v)
+            data = _run_visual(v['kind'], v,
+                               slicers + list(v.get('filters') or []) + cross,
+                               uid, role)
+            out.append({'id': vid, 'kind': v['kind'],
+                        'title': v.get('title') or vid, 'ok': True, 'data': data})
+        except BIValidationError as e:
+            out.append({'id': vid, 'kind': v.get('kind', '?'),
+                        'title': v.get('title') or vid, 'ok': False,
+                        'error': str(e)})
+        except Exception as e:  # um visual nunca derruba o relatório
+            out.append({'id': vid, 'kind': v.get('kind', '?'),
+                        'title': v.get('title') or vid, 'ok': False,
+                        'error': f"erro: {e}"})
+    return Response({'dashboard': obj.name, 'slicers': slicers,
+                     'cross_filters': cross, 'visuals': out})
+
+
+# ---------------------------------------------------------------- Q&A
+
+@api_view(['POST'])
+@permission_classes([IsViewerOrAbove])
+@throttle_classes([UserRateThrottle])
+def bi_qa(request):
+    """Pergunte aos dados: PT/EN → especificação executável + visual."""
+    d = request.data if isinstance(request.data, dict) else {}
+    try:
+        return Response(ask_question(d.get('question') or '',
+                                     user_id=_uid(request), role=_role(request)))
+    except BIValidationError as e:
+        return _bi_error(e)
+
+
+# ---------------------------------------------------------------- exportação
+
+@api_view(['POST'])
+@permission_classes([IsViewerOrAbove])
+@throttle_classes([UserRateThrottle])
+def bi_export(request):
+    """Exporta o payload de um visual para Excel formatado (.xlsx)."""
+    d = request.data if isinstance(request.data, dict) else {}
+    kind = d.get('kind') or 'group'
+    data = d.get('data')
+    if not isinstance(data, dict):
+        return Response({'error': "envie 'kind' e 'data' (payload do visual)"}, status=400)
+    # limite de segurança: 5.000 linhas por exportação
+    if isinstance(data.get('rows'), list) and len(data['rows']) > 5000:
+        data = {**data, 'rows': data['rows'][:5000]}
+    try:
+        content = export_visual_xlsx(kind, data,
+                                     title=d.get('title') or 'Visual BI',
+                                     subtitle=d.get('subtitle') or '')
+    except Exception as e:
+        return Response({'error': f'falha ao gerar Excel: {e}'}, status=400)
+    fname = (d.get('filename') or f"bi-{kind}").strip().replace(' ', '-')[:80]
+    resp = HttpResponse(content,
+                        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp['Content-Disposition'] = f'attachment; filename="{fname}.xlsx"'
+    return resp
+
+
+# ---------------------------------------------------------------- alertas
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsViewerOrAbove])
+@throttle_classes([UserRateThrottle])
+def bi_alerts(request):
+    if request.method == 'GET':
+        data = [{'id': a.id, 'name': a.name, 'measure': a.measure,
+                 'filters': a.filters, 'comparator': a.comparator,
+                 'threshold': a.threshold, 'active': a.active,
+                 'last_value': a.last_value, 'last_state': a.last_state,
+                 'last_checked_at': a.last_checked_at,
+                 'breach_count': a.breach_count} for a in MeasureAlert.objects.all()]
+        return Response({'results': data, 'count': len(data)})
+    if _role(request) not in ('auditor', 'admin'):
+        return Response({'error': 'requer auditor/admin'}, status=status.HTTP_403_FORBIDDEN)
+    d = request.data if isinstance(request.data, dict) else {}
+    name = (d.get('name') or '').strip()
+    if not name or not isinstance(d.get('measure'), dict):
+        return Response({'error': 'name e measure são obrigatórios'}, status=400)
+    if d.get('comparator') not in ('gt', 'lt', 'gte', 'lte'):
+        return Response({'error': 'comparator: gt|lt|gte|lte'}, status=400)
+    try:
+        validate_measure(d['measure'])
+        for f in d.get('filters', []) or []:
+            _validate_filter(f)
+    except BIValidationError as e:
+        return _bi_error(e)
+    try:
+        threshold = float(d.get('threshold', 0))
+    except (TypeError, ValueError):
+        return Response({'error': 'threshold numérico obrigatório'}, status=400)
+    if MeasureAlert.objects.filter(name=name).exists():
+        return Response({'error': f"alerta '{name}' já existe"}, status=409)
+    a = MeasureAlert.objects.create(
+        name=name, measure=d['measure'], filters=d.get('filters') or [],
+        comparator=d['comparator'], threshold=threshold,
+        active=bool(d.get('active', True)), created_by=_uid(request))
+    return Response({'id': a.id, 'name': a.name}, status=status.HTTP_201_CREATED)
+
+
+@api_view(['PATCH', 'DELETE'])
+@permission_classes([IsAuditorOrAdmin])
+@throttle_classes([UserRateThrottle])
+def bi_alert_detail(request, pk):
+    try:
+        a = MeasureAlert.objects.get(pk=pk)
+    except MeasureAlert.DoesNotExist:
+        return Response({'error': 'alerta não encontrado'}, status=404)
+    if request.method == 'DELETE':
+        a.delete()
+        return Response({'deleted': pk})
+    d = request.data if isinstance(request.data, dict) else {}
+    if 'active' in d:
+        a.active = bool(d['active'])
+    if 'threshold' in d:
+        try:
+            a.threshold = float(d['threshold'])
+        except (TypeError, ValueError):
+            return _bi_error(BIValidationError('threshold numérico obrigatório'))
+    if 'comparator' in d and d['comparator'] in ('gt', 'lt', 'gte', 'lte'):
+        a.comparator = d['comparator']
+    a.save(update_fields=['active', 'threshold', 'comparator'])
+    return Response({'id': a.id, 'active': a.active, 'threshold': a.threshold,
+                     'comparator': a.comparator})
+
+
+_CMP_FUNCS = {
+    'gt': lambda v, t: v > t,
+    'lt': lambda v, t: v < t,
+    'gte': lambda v, t: v >= t,
+    'lte': lambda v, t: v <= t,
+}
+
+
+def evaluate_measure_alert(a):
+    """Avalia um alerta: devolve (state, value, notified:bool)."""
+    try:
+        value, _ = run_measure(a.measure, a.filters)
+    except Exception as e:
+        a.last_state, a.last_checked_at = 'error', timezone.now()
+        a.save(update_fields=['last_state', 'last_checked_at'])
+        return 'error', None, False
+    breached = _CMP_FUNCS[a.comparator](value, a.threshold)
+    prev_state = a.last_state
+    a.last_value, a.last_checked_at = value, timezone.now()
+    a.last_state = 'breach' if breached else 'ok'
+    if breached:
+        a.breach_count = (a.breach_count or 0) + 1
+    a.save(update_fields=['last_value', 'last_state', 'last_checked_at',
+                          'breach_count'])
+    notified = False
+    if breached and prev_state != 'breach':  # transição ok→breach notifica
+        sev = 'critical' if a.threshold and abs(value) >= abs(a.threshold) * 1.25 \
+            else 'warn'
+        cmp_pt = a.get_comparator_display()
+        notified = notify_user(
+            a.created_by, kind='bi.alert',
+            title=f"Alerta BI: {a.name}",
+            body=f"Medida em {value:,.2f} — {cmp_pt} {a.threshold:,.2f}.",
+            route='/bi', severity=sev,
+            meta={'alert_id': a.id, 'value': value, 'threshold': a.threshold},
+            dedupe_minutes=0) is not None
+    return a.last_state, value, notified
+
+
+@api_view(['POST'])
+@permission_classes([IsAuditorOrAdmin])
+@throttle_classes([UserRateThrottle])
+def bi_alerts_run(request):
+    """Avalia todos os alertas ativos (agendável via cron/management command)."""
+    results = []
+    for a in MeasureAlert.objects.filter(active=True):
+        state, value, notified = evaluate_measure_alert(a)
+        results.append({'id': a.id, 'name': a.name, 'state': state,
+                        'value': value, 'notified': notified})
+    return Response({'evaluated': len(results), 'results': results})

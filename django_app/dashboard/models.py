@@ -681,3 +681,50 @@ class RLSRule(models.Model):
     def __str__(self):
         target = self.user_id or f"role:{self.role}"
         return f"RLS {self.name}: {target} → {self.dimension}"
+
+
+class BIDashboard(models.Model):
+    """Relatório BI guardado (estilo canvas do Power BI): conjunto de visuais
+    fixados + slicers partilhados + layout. Executado numa só chamada para o
+    dashboard interativo com cross-filtering."""
+
+    name = models.CharField(max_length=120, unique=True)
+    description = models.CharField(max_length=300, blank=True, default='')
+    config = models.JSONField(default=dict)  # {visuals:[{id,kind,measure,dimension,...}], slicers:[...], layout:{cols}}
+    created_by = models.CharField(max_length=128, blank=True, default='')
+    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+        verbose_name_plural = 'BI dashboards'
+
+    def __str__(self):
+        return f"Dashboard {self.name} ({len((self.config or {}).get('visuals', []))} visuais)"
+
+
+class MeasureAlert(models.Model):
+    """Alerta de medida (estilo Power BI data alert): avalia uma medida com
+    filtros e, quando cruza o limiar, notifica via Central de Notificações."""
+
+    COMPARATORS = (('gt', 'acima de'), ('lt', 'abaixo de'),
+                   ('gte', 'acima ou igual'), ('lte', 'abaixo ou igual'))
+
+    name = models.CharField(max_length=120, unique=True)
+    measure = models.JSONField()          # árvore de expressão validada
+    filters = models.JSONField(default=list, blank=True)
+    comparator = models.CharField(max_length=4, choices=COMPARATORS, default='gt')
+    threshold = models.FloatField(default=0.0)
+    active = models.BooleanField(default=True)
+    last_value = models.FloatField(null=True, blank=True)
+    last_state = models.CharField(max_length=12, blank=True, default='')  # ok|breach|error
+    last_checked_at = models.DateTimeField(null=True, blank=True)
+    breach_count = models.IntegerField(default=0)
+    created_by = models.CharField(max_length=128, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return f"Alerta {self.name}: {self.get_comparator_display()} {self.threshold}"
