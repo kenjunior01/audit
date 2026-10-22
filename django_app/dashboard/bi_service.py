@@ -32,8 +32,9 @@ AGGS = {'sum', 'avg', 'count', 'nunique', 'min', 'max', 'median'}
 FILTER_OPS = {'eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in', 'contains', 'notnull'}
 DIMENSIONS = {
     'vendor', 'category', 'status', 'currency', 'user_id',
-    'month', 'quarter', 'weekday', 'date',
+    'month', 'quarter', 'weekday', 'date', 'week',
 }
+GRANULARITIES = {'day', 'week', 'month', 'quarter', 'year'}
 MAX_DEPTH = 4
 MAX_ROWS = 200_000
 
@@ -81,7 +82,7 @@ def _validate(node, depth=0):
 def _validate_filter(f):
     if not isinstance(f, dict) or f.get('field') not in (
             FIELDS | {'vendor', 'category', 'status', 'currency', 'user_id',
-                      'transaction_id', 'month', 'weekday', 'date'}):
+                      'transaction_id', 'month', 'weekday', 'date', 'week'}):
         raise BIValidationError(f"filtro: campo inválido {f.get('field')}")
     if f.get('op') not in FILTER_OPS:
         raise BIValidationError(f"filtro: op inválida {f.get('op')}")
@@ -133,13 +134,16 @@ def _apply_filters(df, filters):
         field, op, value = f.get('field'), f.get('op'), f.get('value')
         if field == 'month':
             s = pd.to_datetime(df['timestamp'], errors='coerce', utc=True).dt.strftime('%Y-%m')
+        elif field == 'week':
+            iso = df['timestamp'].dt.isocalendar()
+            s = iso['year'].astype(str) + '-S' + iso['week'].astype(str).str.zfill(2)
         elif field == 'weekday':
             s = df['timestamp'].dt.day_name() if 'timestamp' in df else None
         elif field == 'date':
             s = pd.to_datetime(df['timestamp'], errors='coerce', utc=True).dt.strftime('%Y-%m-%d')
         else:
             s = df[field]
-        temporal = field in ('date', 'month')  # ISO strings: comparar lexicograficamente
+        temporal = field in ('date', 'month', 'week')  # ISO strings: comparar lexicograficamente
         if op == 'eq':
             mask = (s == value) if (temporal or field not in FIELDS) else (pd.to_numeric(s, errors='coerce') == float(value))
         elif op == 'ne':
@@ -194,7 +198,24 @@ def _dim_series(df, dim):
         return df['timestamp'].dt.day_name()
     if dim == 'date':
         return df['timestamp'].dt.strftime('%Y-%m-%d')
+    if dim == 'week':
+        iso = df['timestamp'].dt.isocalendar()
+        return iso['year'].astype(str) + '-S' + iso['week'].astype(str).str.zfill(2)
     return df[dim].astype(str).replace('None', '—').replace('nan', '—')
+
+
+def _time_key(ts, granularity):
+    """Chave temporal ISO determinística por granularidade."""
+    if granularity == 'day':
+        return ts.strftime('%Y-%m-%d')
+    if granularity == 'week':
+        iso = ts.isocalendar()
+        return f"{iso.year}-S{iso.week:02d}"
+    if granularity == 'month':
+        return ts.strftime('%Y-%m')
+    if granularity == 'quarter':
+        return f"{ts.year}-T{(ts.month - 1) // 3 + 1}"
+    return str(ts.year)
 
 
 # ---------------------------------------------------------------- avaliação
@@ -446,3 +467,234 @@ def drillthrough_view(filters, dimension=None, value=None, user_id='', role='',
     out = df[cols].copy()
     out['timestamp'] = out['timestamp'].astype(str)
     return {'rows': out.to_dict('records'), 'count': len(out)}
+
+
+# ---------------------------------------------------------------- visuais v2
+# Fase REA de iteração: capacidades avançadas do Power BI documentadas e
+# reproduzidas — séries com média móvel, forecast (tendência linear),
+# deteção de anomalias (z-score), waterfall, funil, scatter e KPI com alvo.
+
+def _agg_on_factory(measure):
+    """Função de agregação de sub-DataFrames reutilizável pelos visuais."""
+    def _agg_on(sub):
+        if measure['op'] == 'agg':
+            return _agg_series(pd.to_numeric(sub[measure['field']], errors='coerce'),
+                               measure['agg'])
+        return evaluate_measure(measure, sub)
+    return _agg_on
+
+
+def _time_series_df(measure, granularity, filters, user_id, role, min_points=2):
+    """Série temporal determinística: [(key, value)] ordenada ascendente."""
+    _validate(measure)
+    if granularity not in GRANULARITIES:
+        raise BIValidationError(f"granularidade inválida: {granularity} "
+                                f"(use {sorted(GRANULARITIES)})")
+    df = _base_df(rls_rules=rls_rules_for(user_id, role))
+    df = _apply_filters(df, filters)
+    if df.empty:
+        return []
+    agg = _agg_on_factory(measure)
+    ts = df['timestamp'].dt.tz_convert('UTC')
+    keys = ts.map(lambda t: None if pd.isna(t) else _time_key(t, granularity))
+    keys = keys.dropna()
+    out = []
+    for key in sorted(keys.unique()):
+        sub = df[keys == key]
+        out.append({'key': str(key), 'value': agg(sub)})
+    return out
+
+
+def series_view(measure, granularity='month', window=3, filters=None,
+                user_id='', role=''):
+    """Série temporal + média móvel + acumulado (Power BI analytics pane)."""
+    try:
+        window = max(2, min(int(window or 3), 12))
+    except (TypeError, ValueError):
+        window = 3
+    rows = _time_series_df(measure, granularity, filters, user_id, role)
+    values = [r['value'] for r in rows]
+    for i, r in enumerate(rows):
+        lo = max(0, i - window + 1)
+        seg = values[lo:i + 1]
+        r['moving_avg'] = float(np.mean(seg)) if seg else r['value']
+        r['cumulative'] = float(np.sum(values[:i + 1]))
+    return {'granularity': granularity, 'window': window, 'rows': rows}
+
+
+def _next_time_key(key, granularity, step=1):
+    """Próxima chave temporal ISO (para projeção de forecast)."""
+    if granularity == 'year':
+        return str(int(key) + step)
+    if granularity == 'quarter':
+        y, q = key.split('-T')
+        q = int(q) + step
+        y = int(y) + (q - 1) // 4
+        q = (q - 1) % 4 + 1
+        return f"{y}-T{q}"
+    if granularity == 'month':
+        y, m = map(int, key.split('-'))
+        total = y * 12 + (m - 1) + step
+        return f"{total // 12}-{total % 12 + 1:02d}"
+    if granularity == 'week':
+        y, w = key.split('-S')
+        return f"{y}-S{int(w) + step:02d}"  # projeções curtas: semana incremental
+    # day: avança em dias via dateutil-free aritmética
+    import datetime as _dt
+    d = _dt.date.fromisoformat(key) + _dt.timedelta(days=step)
+    return d.isoformat()
+
+
+def forecast_view(measure, granularity='month', periods=3, filters=None,
+                  user_id='', role=''):
+    """Forecast estilo Power BI: tendência linear (mínimos quadrados) sobre a
+    série histórica + projeção N períodos com intervalo simples (±1 desvio)."""
+    try:
+        periods = max(1, min(int(periods or 3), 12))
+    except (TypeError, ValueError):
+        periods = 3
+    hist = _time_series_df(measure, granularity, filters, user_id, role)
+    if len(hist) < 2:
+        return {'granularity': granularity, 'history': hist, 'forecast': [],
+                'slope': 0.0, 'note': 'dados insuficientes para tendência'}
+    x = np.arange(len(hist), dtype=float)
+    y = np.array([r['value'] for r in hist], dtype=float)
+    slope, intercept = np.polyfit(x, y, 1)
+    resid = y - (slope * x + intercept)
+    sigma = float(np.std(resid)) or (abs(float(y.mean())) * 0.1 or 1.0)
+    fc = []
+    for i in range(len(hist), len(hist) + periods):
+        key = _next_time_key(hist[-1]['key'], granularity, i - len(hist) + 1)
+        v = float(slope * i + intercept)
+        fc.append({'key': key, 'value': max(v, 0.0),
+                   'lower': max(v - sigma, 0.0), 'upper': max(v + sigma, 0.0)})
+    return {'granularity': granularity, 'history': hist, 'forecast': fc,
+            'slope': float(slope), 'sigma': sigma}
+
+
+def anomaly_view(measure, granularity='month', z_threshold=2.5, filters=None,
+                 user_id='', role=''):
+    """Deteção de anomalias estilo Power BI: z-score da série; |z| ≥ limiar
+    marca o ponto como anomalia (alta ou baixa)."""
+    try:
+        zt = max(1.0, min(float(z_threshold or 2.5), 5.0))
+    except (TypeError, ValueError):
+        zt = 2.5
+    rows = _time_series_df(measure, granularity, filters, user_id, role)
+    values = np.array([r['value'] for r in rows], dtype=float)
+    if len(values) >= 3 and float(np.std(values)) > 0:
+        mean, std = float(np.mean(values)), float(np.std(values))
+        for r, v in zip(rows, values):
+            z = (v - mean) / std
+            r['z'] = round(float(z), 3)
+            r['anomaly'] = bool(abs(z) >= zt)
+            r['anomaly_kind'] = ('high' if z > 0 else 'low') if r['anomaly'] else ''
+    else:
+        for r in rows:
+            r['z'] = 0.0
+            r['anomaly'] = False
+            r['anomaly_kind'] = ''
+    return {'granularity': granularity, 'z_threshold': zt, 'rows': rows,
+            'n_anomalies': sum(1 for r in rows if r['anomaly'])}
+
+
+def waterfall_view(measure, dimension, filters=None, user_id='', role='',
+                   max_items=12):
+    """Waterfall: contribuição incremental de cada membro da dimensão até ao
+    total (ordem descendente) — decomposição visual do total."""
+    _validate(measure)
+    if dimension not in DIMENSIONS:
+        raise BIValidationError(f"dimensão inválida: {dimension}")
+    g = group_measure(measure, dimension, top_n=max_items, filters=filters,
+                      user_id=user_id, role=role)
+    rows, cum = [], 0.0
+    for r in g['rows']:
+        base = cum
+        cum += r['value']
+        rows.append({**r, 'base': base, 'cumulative': cum})
+    return {'dimension': dimension, 'rows': rows, 'total': cum}
+
+
+def funnel_view(measure, dimension, filters=None, user_id='', role='',
+                max_stages=10):
+    """Funil: membros ordenados descendente com conversão fase-a-fase e
+    percentagem face à primeira fase (estilo visual Funnel do Power BI)."""
+    _validate(measure)
+    if dimension not in DIMENSIONS:
+        raise BIValidationError(f"dimensão inválida: {dimension}")
+    g = group_measure(measure, dimension, top_n=max_stages, filters=filters,
+                      user_id=user_id, role=role)
+    rows = []
+    first = g['rows'][0]['value'] if g['rows'] else 0.0
+    prev = None
+    for i, r in enumerate(g['rows']):
+        conv_prev = (r['value'] / prev) if prev else 1.0
+        rows.append({**r, 'stage': i + 1, 'conv_prev': min(conv_prev, 1.0) if prev else 1.0,
+                     'pct_of_first': (r['value'] / first) if first else 0.0})
+        prev = r['value'] or 1.0
+    return {'dimension': dimension, 'rows': rows, 'first_value': first}
+
+
+def scatter_view(measure_x, measure_y, dimension, filters=None, user_id='',
+                 role='', max_points=30):
+    """Scatter de duas medidas por dimensão com quadrantes (médias) e
+    correlação de Pearson — análise cruzada estilo Power BI."""
+    _validate(measure_x)
+    _validate(measure_y)
+    if dimension not in DIMENSIONS:
+        raise BIValidationError(f"dimensão inválida: {dimension}")
+    df = _base_df(rls_rules=rls_rules_for(user_id, role))
+    df = _apply_filters(df, filters)
+    if df.empty:
+        return {'points': [], 'mean_x': 0, 'mean_y': 0, 'correlation': None}
+    agg_x, agg_y = _agg_on_factory(measure_x), _agg_on_factory(measure_y)
+    d = _dim_series(df, dimension)
+    points = []
+    for key, sub in df.groupby(d, observed=True):
+        points.append({'dimension': str(key), 'x': agg_x(sub), 'y': agg_y(sub),
+                       'n': int(len(sub))})
+    points.sort(key=lambda p: p['y'], reverse=True)
+    points = points[:max(1, min(int(max_points or 30), 100))]
+    xs = np.array([p['x'] for p in points], dtype=float)
+    ys = np.array([p['y'] for p in points], dtype=float)
+    corr = None
+    if len(points) >= 3 and float(np.std(xs)) > 0 and float(np.std(ys)) > 0:
+        corr = round(float(np.corrcoef(xs, ys)[0, 1]), 4)
+    return {'dimension': dimension, 'measure_x': measure_x, 'measure_y': measure_y,
+            'points': points, 'mean_x': float(xs.mean()) if len(xs) else 0.0,
+            'mean_y': float(ys.mean()) if len(ys) else 0.0,
+            'correlation': corr}
+
+
+def kpi_view(measure, target=None, filters=None, user_id='', role=''):
+    """Cartão KPI com alvo e tendência (30d vs 30d anteriores) — estilo
+    visual KPI do Power BI com estado on_track/warn/critical."""
+    df = _base_df(rls_rules=rls_rules_for(user_id, role))
+    value = evaluate_measure(measure, _apply_filters(df, filters))
+    n = len(df)
+    try:
+        target = float(target) if target is not None else None
+    except (TypeError, ValueError):
+        target = None
+    now = timezone.now()
+    cur = _apply_filters(df, [*(filters or []),
+                              {'field': 'date', 'op': 'gte',
+                               'value': (now - timedelta(days=30)).strftime('%Y-%m-%d')}])
+    prev = _apply_filters(df, [
+        *(filters or []),
+        {'field': 'date', 'op': 'gte', 'value': (now - timedelta(days=60)).strftime('%Y-%m-%d')},
+        {'field': 'date', 'op': 'lt', 'value': (now - timedelta(days=30)).strftime('%Y-%m-%d')},
+    ])
+    agg = _agg_on_factory(measure)
+    cur_v = agg(cur) if len(cur) else 0.0
+    prev_v = agg(prev) if len(prev) else 0.0
+    trend = ((cur_v - prev_v) / prev_v) if prev_v else (None if prev_v == cur_v else 1.0)
+    pct_target = (value / target) if target else None
+    status = ''
+    if target is not None:
+        status = ('on_track' if value >= target else
+                  'warn' if value >= target * 0.8 else 'critical')
+    return {'value': value, 'target': target,
+            'pct_of_target': pct_target, 'status': status,
+            'trend_30d': trend, 'current_30d': cur_v, 'previous_30d': prev_v,
+            'rows': n}

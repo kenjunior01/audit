@@ -17,7 +17,12 @@ from .bi_views import (bi_measures, bi_measure_delete, bi_dimensions,
                        bi_evaluate, bi_group, bi_matrix, bi_pareto,
                        bi_decompose, bi_whatif, bi_drillthrough,
                        bi_pipelines, bi_pipeline_delete, bi_pipeline_run,
-                       bi_rls, bi_rls_detail)
+                       bi_rls, bi_rls_detail,
+                       bi_visual, bi_series, bi_forecast, bi_anomaly,
+                       bi_waterfall, bi_funnel, bi_scatter, bi_kpi,
+                       bi_dashboards, bi_dashboard_detail, bi_dashboard_run,
+                       bi_qa, bi_export, bi_alerts, bi_alert_detail,
+                       bi_alerts_run)
 
 router = DefaultRouter()
 router.register(r'governance', AIGovernanceViewSet, basename='governance')
@@ -132,6 +137,24 @@ urlpatterns = [
     path('bi/pipelines/<int:pk>/run', bi_pipeline_run, name='bi_pipeline_run'),
     path('bi/rls', bi_rls, name='bi_rls'),
     path('bi/rls/<int:pk>', bi_rls_detail, name='bi_rls_detail'),
+
+    # BI Studio v2 — visuais avançados, relatórios, Q&A, exportação e alertas
+    path('bi/visual', bi_visual, name='bi_visual'),
+    path('bi/series', bi_series, name='bi_series'),
+    path('bi/forecast', bi_forecast, name='bi_forecast'),
+    path('bi/anomaly', bi_anomaly, name='bi_anomaly'),
+    path('bi/waterfall', bi_waterfall, name='bi_waterfall'),
+    path('bi/funnel', bi_funnel, name='bi_funnel'),
+    path('bi/scatter', bi_scatter, name='bi_scatter'),
+    path('bi/kpi', bi_kpi, name='bi_kpi'),
+    path('bi/dashboards', bi_dashboards, name='bi_dashboards'),
+    path('bi/dashboards/<int:pk>', bi_dashboard_detail, name='bi_dashboard_detail'),
+    path('bi/dashboards/<int:pk>/run', bi_dashboard_run, name='bi_dashboard_run'),
+    path('bi/qa', bi_qa, name='bi_qa'),
+    path('bi/export/xlsx', bi_export, name='bi_export'),
+    path('bi/alerts', bi_alerts, name='bi_alerts'),
+    path('bi/alerts/run', bi_alerts_run, name='bi_alerts_run'),
+    path('bi/alerts/<int:pk>', bi_alert_detail, name='bi_alert_detail'),
 
     # Documentação OpenAPI 3
     path('schema', SpectacularAPIView.as_view(), name='schema'),
