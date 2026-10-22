@@ -4,8 +4,9 @@ import { apiFetch, apiDownload } from '@/lib/api'
 import { useRequireToken } from '@/lib/auth'
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import AssistantTab from './assistant-tab'
+import AutoTab from './auto-tab'
 import {
-  FileSpreadsheet, Upload, Search, GitCompareArrows, Download,
+  FileSpreadsheet, Upload, Search, GitCompareArrows, Download, Zap,
   CheckCircle2, AlertTriangle, Info, Loader2, BarChart3, Copy, Sparkles,
 } from 'lucide-react'
 
@@ -34,6 +35,7 @@ const FIELD_LABELS: Record<string, string> = {
 }
 
 const TABS = [
+  { id: 'auto', label: 'Análise Auto', icon: Zap },
   { id: 'assistant', label: 'Copiloto IA', icon: Sparkles },
   { id: 'import', label: 'Importar', icon: Upload },
   { id: 'analyze', label: 'Análises', icon: Search },
@@ -43,7 +45,8 @@ const TABS = [
 
 export default function ExcelStudioPage() {
   useRequireToken()
-  const [tab, setTab] = useState('assistant')
+  const [tab, setTab] = useState('auto')
+  const [copilotFile, setCopilotFile] = useState<File | null>(null)
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
@@ -54,7 +57,7 @@ export default function ExcelStudioPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Excel Studio</h1>
           <p className="text-sm text-slate-400">
-            Pergunte ao Copiloto IA, importe com mapeamento automático, analise, reconcilie e apresente
+            Largue o ficheiro e receba a análise completa em 1 clique — importe, reconcilie e gere o dossiê sem sair do ecrã
           </p>
         </div>
       </div>
@@ -71,7 +74,10 @@ export default function ExcelStudioPage() {
         })}
       </div>
 
-      {tab === 'assistant' && <AssistantTab />}
+      {tab === 'auto' && <AutoTab
+        onAskCopilot={f => { setCopilotFile(f); setTab('assistant') }}
+        onGoImport={() => setTab('import')} />}
+      {tab === 'assistant' && <AssistantTab initialFile={copilotFile} />}
       {tab === 'import' && <ImportTab />}
       {tab === 'analyze' && <AnalyzeTab />}
       {tab === 'reconcile' && <ReconcileTab />}

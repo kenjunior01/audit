@@ -34,6 +34,17 @@ e export premium) e um **Copiloto Global** — modelo de suporte em três camada
 | **Reconciliar** | Cruzamento automático entre folhas/fontes com relatório de diferenças |
 | **Exportar** | Workbook premium com gráficos nativos, formatação condicional, autofiltro e tabelas reais |
 
+### Excel Auto — a experiência de 1 clique
+
+Largue o ficheiro (ou clique "Testar com exemplo") e receba numa única resposta:
+folha+colunas detetadas, qualidade 0-100 com nota A-D, risco de auditoria
+(Benford, duplicados, fraccionamento, redondos, weekend), insights narrativos e
+ações de 1 clique (importar / relatório premium / copiloto). Reconciliação Auto:
+cruze 2 ficheiros ou contra a base de dados sem configurar nada. **Dossiê
+completo**: 1 clique que importa os dados, gera o painel REA e consolida tudo
+num único workbook (Dossiê, Painel, Qualidade, Benford, Duplicados,
+Fraccionamento, Redondos, Dados).
+
 ### Copiloto IA (NL → Excel)
 
 Conversa em português ou inglês: *"mostra o top 10 fornecedores por valor"*, *"adiciona uma coluna com o mês"*.

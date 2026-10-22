@@ -691,7 +691,9 @@ def reconcile(df_a: pd.DataFrame, df_b: pd.DataFrame,
             "vendor_similarity": round(float(sim), 3),
             "weak": bool(sim < vendor_ratio),
         })
-    only_a = a.loc[~a.index.isin(only_a_idx)] if only_a_idx else a.iloc[0:0]
+    # órfãos de A = exatamente as linhas SEM correspondência (only_a_idx);
+    # a inversão antiga (~isin) devolvia as linhas CASADAS
+    only_a = a.loc[a.index.isin(only_a_idx)] if only_a_idx else a.iloc[0:0]
     only_b = b_pool[~b_pool["_used"]]
 
     sum_a = round(float(a["_amt"].sum()), 2)

@@ -25,6 +25,7 @@ from .auth import IsAuditorOrAdmin, IsViewerOrAbove
 from .models import Transaction, Alert, AuditCase, ExcelImportJob
 from . import excel_service as es
 from . import excel_ai_service as ai
+from . import excel_auto_service as auto
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,12 @@ def _transactions_dataframe(days: int = 365, vendor: str = None,
                           "timestamp", "category", "user_id", "status")[:limit])
     df = pd.DataFrame(rows)
     if not df.empty:
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        ts = pd.to_datetime(df["timestamp"])
+        if getattr(ts.dt, "tz", None) is not None:
+            # ORM devolve tz-aware (UTC); ficheiros chegam tz-naive — alinhar
+            # para o cruzamento na reconciliação não rebentar com TypeError
+            ts = ts.dt.tz_localize(None)
+        df["timestamp"] = ts
     return df
 
 
@@ -135,59 +141,11 @@ def excel_import(request):
             }, status=400)
 
         user_id = _auth_user_id(request)
-
-        # Deduplica IDs dentro do próprio ficheiro (mantém a 1ª ocorrência)
-        seen, unique_rows = set(), []
-        for r in rows:
-            if r["transaction_id"] in seen:
-                continue
-            seen.add(r["transaction_id"])
-            unique_rows.append(r)
-        in_file_dupes = len(rows) - len(unique_rows)
-
-        existing_ids = set(Transaction.objects.filter(
-            transaction_id__in=[r["transaction_id"] for r in unique_rows]
-        ).values_list("transaction_id", flat=True))
-
-        to_create, duplicates = [], in_file_dupes
-        for r in unique_rows:
-            if r["transaction_id"] in existing_ids:
-                duplicates += 1
-                if mode != "update":
-                    continue
-                Transaction.objects.filter(transaction_id=r["transaction_id"]).update(
-                    vendor=r["vendor"], amount=r["amount"], currency=r["currency"],
-                    timestamp=r["timestamp"], category=r["category"],
-                    user_id=r["user_id"], status=r["status"])
-                continue
-            to_create.append(Transaction(**r))
-
-        with db_transaction.atomic():
-            created = len(Transaction.objects.bulk_create(to_create, batch_size=500))
-
-        job = ExcelImportJob.objects.create(
-            file_name=name,
-            uploaded_by=user_id,
-            rows_imported=created,
-            rows_skipped=len(skipped) + duplicates,
-            mapping=mapping,
-            errors=[str(s) for s in skipped[:200]],
-            status="Completed",
-            sheet=sheet_name,
-        )
-        # Central de Notificações — importação concluída
-        try:
-            from .notifications_service import notify_user
-            sev = "success" if created else "warn"
-            notify_user(user_id, "excel.import",
-                        f"Importação concluída: {name}",
-                        body=f"{created} transações importadas, {duplicates} duplicados ignorados, "
-                             f"{len(skipped)} linhas inválidas.",
-                        route="/excel", severity=sev, meta={"job_id": job.id})
-        except Exception:
-            pass
+        created, duplicates, job_id = auto.import_standardized(
+            rows, name, uploaded_by=user_id, sheet_name=sheet_name,
+            mapping=mapping, skipped=skipped, mode=mode)
         return Response({
-            "job_id": job.id,
+            "job_id": job_id,
             "file": name,
             "sheet": sheet_name,
             "imported": created,
@@ -203,6 +161,190 @@ def excel_import(request):
     except Exception as e:
         logger.exception("excel_import failed")
         return Response({"error": f"Erro na importação: {e}"}, status=500)
+
+
+# ---------------------------------------------------------------------------
+# 2-b) EXCEL AUTO — análise, relatório, reconciliação, dossiê e exemplo (1 clique)
+# ---------------------------------------------------------------------------
+
+@api_view(["POST"])
+@permission_classes([IsViewerOrAbove])
+@parser_classes([MultiPartParser])
+def excel_auto(request):
+    """
+    Larga o ficheiro e recebe TUDO numa resposta: folha+mapeamento detetados
+    (com retry multi-folha), perfil, qualidade 0-100 com checks, risco,
+    insights e próximos passos. Nada é importado — isso é um clique explícito.
+    Body (multipart): file, threshold (opcional), sheet (opcional).
+    """
+    try:
+        files = _read_files(request, "file")
+        if not files:
+            return Response({"error": "Envie o ficheiro no campo 'file' (ou clique em 'Testar com exemplo')."}, status=400)
+        name, content = files[0]
+        threshold = float(request.data.get("threshold", 10000) or 10000)
+        result = auto.auto_analyze(content, name, threshold=threshold,
+                                   sheet=request.data.get("sheet") or None)
+        return Response(result)
+    except ValueError as e:
+        return Response({"error": str(e)}, status=400)
+    except Exception as e:
+        logger.exception("excel_auto failed")
+        return Response({"error": f"Erro na análise automática: {e}"}, status=500)
+
+
+@api_view(["POST"])
+@permission_classes([IsViewerOrAbove])
+@parser_classes([MultiPartParser])
+def excel_auto_report(request):
+    """Relatório Premium (.xlsx) da análise Auto do ficheiro carregado."""
+    try:
+        files = _read_files(request, "file")
+        if not files:
+            return Response({"error": "Envie o ficheiro no campo 'file'."}, status=400)
+        name, content = files[0]
+        threshold = float(request.data.get("threshold", 10000) or 10000)
+        wb_bytes, fname = auto.build_auto_report(content, name, threshold=threshold)
+        return HttpResponse(
+            wb_bytes,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+    except ValueError as e:
+        return Response({"error": str(e)}, status=400)
+    except Exception as e:
+        logger.exception("excel_auto_report failed")
+        return Response({"error": f"Erro ao gerar o relatório: {e}"}, status=500)
+
+
+@api_view(["GET"])
+@permission_classes([IsViewerOrAbove])
+def excel_sample(request):
+    """Ficheiro de exemplo (com pequenos problemas plantados) para
+    experimentar a análise Auto em 1 clique."""
+    try:
+        wb_bytes = auto.generate_sample_xlsx()
+        return HttpResponse(
+            wb_bytes,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": 'attachment; filename="exemplo_movimentos.xlsx"'})
+    except Exception as e:
+        logger.exception("excel_sample failed")
+        return Response({"error": f"Erro ao gerar o exemplo: {e}"}, status=500)
+
+
+def _auto_reconcile_payload(request):
+    """Lê file_a (+file_b ou use_db_b) e devolve os argumentos prontos."""
+    files = _read_files(request, "file_a")
+    if not files:
+        return None, None, Response(
+            {"error": "Envie o 1º ficheiro no campo 'file_a'."}, status=400)
+    name_a, content_a = files[0]
+
+    df_b = content_b = name_b = None
+    if str(request.data.get("use_db_b", "")).lower() in ("1", "true", "yes"):
+        df_b = _transactions_dataframe(
+            days=int(request.data.get("days_b", 365) or 365))
+        if df_b.empty:
+            return None, None, Response(
+                {"error": "A base de dados não tem transações nos últimos dias "
+                          "indicados (days_b). Importe dados ou use um 2º ficheiro."},
+                status=400)
+    else:
+        files_b = _read_files(request, "file_b")
+        if not files_b:
+            return None, None, Response(
+                {"error": "Envie o 2º ficheiro no campo 'file_b' ou use use_db_b=1 "
+                          "para reconciliar contra a base de dados."}, status=400)
+        name_b, content_b = files_b[0]
+    return (content_a, name_a, content_b, name_b, df_b), None, None
+
+
+@api_view(["POST"])
+@permission_classes([IsAuditorOrAdmin])
+@parser_classes([MultiPartParser])
+def excel_auto_reconcile(request):
+    """Reconciliação Auto de 1 clique: folha+mapeamento automáticos nos 2 lados.
+    Body (multipart): file_a, file_b OU use_db_b=1 (+days_b), sheet (opcional),
+    amount_tol, date_tol_days (opcionais)."""
+    try:
+        args, _, err = _auto_reconcile_payload(request)
+        if err:
+            return err
+        content_a, name_a, content_b, name_b, df_b = args
+        result = auto.auto_reconcile(
+            content_a, name_a, content_b=content_b, name_b=name_b, df_b=df_b,
+            sheet=request.data.get("sheet") or None,
+            amount_tol=float(request.data.get("amount_tol", 0.01) or 0.01),
+            date_tol_days=int(request.data.get("date_tol_days", 3) or 3))
+        return Response(result)
+    except ValueError as e:
+        return Response({"error": str(e)}, status=400)
+    except Exception as e:
+        logger.exception("excel_auto_reconcile failed")
+        return Response({"error": f"Erro na reconciliação automática: {e}"}, status=500)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuditorOrAdmin])
+@parser_classes([MultiPartParser])
+def excel_auto_reconcile_report(request):
+    """Workbook premium da reconciliação Auto (Sumário + Conciliadas +
+    Só em A + Só em B)."""
+    try:
+        args, _, err = _auto_reconcile_payload(request)
+        if err:
+            return err
+        content_a, name_a, content_b, name_b, df_b = args
+        wb_bytes, fname = auto.build_reconcile_report(
+            content_a, name_a, content_b=content_b, name_b=name_b, df_b=df_b,
+            amount_tol=float(request.data.get("amount_tol", 0.01) or 0.01),
+            date_tol_days=int(request.data.get("date_tol_days", 3) or 3))
+        return HttpResponse(
+            wb_bytes,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+    except ValueError as e:
+        return Response({"error": str(e)}, status=400)
+    except Exception as e:
+        logger.exception("excel_auto_reconcile_report failed")
+        return Response({"error": f"Erro ao gerar o relatório de reconciliação: {e}"}, status=500)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuditorOrAdmin])
+@parser_classes([MultiPartParser])
+def excel_auto_dossier(request):
+    """Dossiê de Auditoria de 1 clique: analisa o ficheiro, importa as
+    transações (clique explícito = este POST), gera o painel REA sobre a base
+    e devolve UM workbook consolidado (Dossiê, Painel, Qualidade, Benford,
+    Duplicados, Fraccionamento, Redondos, Dados).
+    Body (multipart): file, threshold (opcional), mode (skip|update)."""
+    try:
+        files = _read_files(request, "file")
+        if not files:
+            return Response({"error": "Envie o ficheiro no campo 'file' (ou clique em 'Testar com exemplo')."}, status=400)
+        name, content = files[0]
+        threshold = float(request.data.get("threshold", 10000) or 10000)
+        mode = (request.data.get("mode") or "skip").lower()
+        user_id = _auth_user_id(request)
+        role = getattr(getattr(request, "user", None), "role", "") or ""
+        wb_bytes, fname, meta = auto.build_dossier(
+            content, name, threshold=threshold,
+            user_id=user_id, role=role, mode=mode)
+        return HttpResponse(
+            wb_bytes,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f'attachment; filename="{fname}"',
+                "X-Dossier-Imported": str(meta["imported"]),
+                "X-Dossier-Duplicates": str(meta["duplicates"]),
+                "X-Dossier-Skipped": str(meta["skipped"]),
+            })
+    except ValueError as e:
+        return Response({"error": str(e)}, status=400)
+    except Exception as e:
+        logger.exception("excel_auto_dossier failed")
+        return Response({"error": f"Erro ao gerar o dossiê: {e}"}, status=500)
 
 
 # ---------------------------------------------------------------------------

@@ -51,9 +51,9 @@ const CATEGORY_COLORS: Record<string, string> = {
   'Sugestão IA': 'bg-fuchsia-950 text-fuchsia-300 border-fuchsia-800',
 }
 
-export default function AssistantTab() {
+export default function AssistantTab({ initialFile }: { initialFile?: File | null }) {
   useRequireToken()
-  const [file, setFile] = useState<File | null>(null)
+  const [file, setFile] = useState<File | null>(initialFile || null)
   const [useDb, setUseDb] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
