@@ -124,6 +124,27 @@ e as permissões por papel (viewer consulta; auditor/admin gere).
 | Export data com formatação | `/bi/export/xlsx` — Excel com título, cabeçalho estilizado, formatos numéricos, escala de cor condicional, totais, autofilter e painéis congelados |
 | Data alerts | Modelo `MeasureAlert` + `/bi/alerts/run` — avalia medidas e notifica a Central de Notificações na transição para breach (severity warn/critical) |
 
+#### Painel Auto — experiência de 1 clique (método REA, passo 5 "ir além")
+
+A página **Painel Auto** (`/studio`, endpoint `POST /bi/auto`) traz a simplicidade
+que faltava: **um clique, painel completo, zero configuração**. O motor faz
+*engenharia reversa do dataset* — deduz a medida padrão, pontua as dimensões
+pela utilidade analítica (cobertura × cardinalidade saudável 2–12) e compõe
+automaticamente:
+
+- **KPIs**: volume total, transações, ticket médio, maior transação e líder;
+- **Visuais**: volume por dimensão principal, distribuição por secundária,
+  evolução mensal com média móvel, Pareto 80/20, anomalias (z-score) e
+  projeção a 3 meses;
+- **Insights narrativos determinísticos** (concentração, tendência, anomalias);
+- **Slicers simples** (período em chips + clique no gráfico filtra o valor)
+  e transações recentes com drillthrough.
+
+Cada decisão do motor é devolvida em `meta.choices` com a evidência
+(espírito REA: findings com provas). Utilizadores avançados continuam com o
+BI Studio (`/bi`) para medidas DAX-like, pipelines ETL, RLS e relatórios
+guardados.
+
 ---
 
 ## Arranque rápido

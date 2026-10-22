@@ -52,6 +52,7 @@ jobs:
             dashboard.tests.test_bi_engine \
             dashboard.tests.test_bi_pipelines \
             dashboard.tests.test_bi_rls \
+            dashboard.tests.test_bi_auto \
             dashboard.tests.test_bi_v2_visuals \
             dashboard.tests.test_bi_dashboards \
             dashboard.tests.test_bi_qa \
