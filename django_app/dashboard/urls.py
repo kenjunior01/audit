@@ -58,6 +58,12 @@ urlpatterns = [
     path('upload/process-pending', process_pending_analysis, name='process_pending_analysis'),
     path('upload/document', upload_document, name='upload_document'),
     path('profile/me', my_profile, name='my_profile'),
+    # alias usado pelo frontend (home, signals, transactions, settings, cases)
+    path('context/profile/current', my_profile, name='context_profile_current'),
+    # alias usado por AISettingsModal/ContextRiskChart
+    path('settings/integration/current',
+         IntegrationSettingsViewSet.as_view({'get': 'current', 'patch': 'current'}),
+         name='settings_integration_current'),
     path('profile', upsert_profile, name='upsert_profile'),
     path('ai/profile', ai_user_insights, name='ai_user_insights'),
     path('ai/analyze_regulation', analyze_regulation, name='analyze_regulation'),

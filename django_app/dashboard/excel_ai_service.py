@@ -1107,58 +1107,12 @@ def _chat_core(df: pd.DataFrame, sheet_name: str, headers: dict,
     }
 
 
-def chat(file_content: bytes, filename: str, question: str,
-         sheet: str = None, mapping_json: str = None,
-         history: list = None) -> dict:
-    """Upload + pergunta → resposta completa do Copiloto."""
-    frames = es.read_uploaded_file(file_content, filename)
-    sheet_name = str(sheet) if sheet else es.pick_best_sheet(frames)
-    if sheet_name not in frames:
-        sheet_name = es.pick_best_sheet(frames)
-    df_raw = frames[sheet_name]
-
-    mapping = None
-    if mapping_json:
-        try:
-            mapping = json.loads(mapping_json)
-        except json.JSONDecodeError:
-            mapping = None
-    if not mapping:
-        mapping = es.map_columns([str(c) for c in df_raw.columns])
-
-    rows, skipped = es.standardize_frame(df_raw, mapping)
-    headers = {}
-    for canon, orig in (mapping or {}).items():
-        if canon in CANON_LABELS_PT and orig:
-            headers[canon] = str(orig)
-
-    if not rows:
-        return {
-            "intent": "explain", "model_used": "rule-engine",
-            "answer": "Não consegui ler linhas válidas desta folha com o "
-                      "mapeamento automático. Verifique se a folha escolhida "
-                      "contém pelo menos **Valor** e **Data**, ou ajuste o "
-                      "mapeamento na aba *Importar* e tente de novo.",
-            "sheet": sheet_name,
-            "data_context": {"rows": 0, "columns": []},
-            "operations_applied": [], "plan": [],
-            "result": {"columns": [], "rows": [], "shown": 0, "total_rows": 0,
-                       "numeric": {}},
-            "formulas": suggest_formulas(pd.DataFrame(columns=list(CANON_LABELS_PT)),
-                                         headers),
-            "charts": [], "followups": [],
-        }
-    return _chat_core(pd.DataFrame(rows), sheet_name, headers, question, history)
-
-
-def apply_and_build(file_content: bytes, filename: str, plan: list,
-                    sheet: str = None, mapping_json: str = None,
-                    title: str = None) -> tuple:
-    """
-    Reproduz o plano confirmado e devolve (bytes_xlsx, nome_ficheiro).
-    O workbook inclui a Tabela 'tblDados', KPIs vivos e a folha de Fórmulas.
-    """
-    frames = es.read_uploaded_file(file_content, filename)
+def _read_std_frame(frames: dict, sheet: str = None, mapping_json: str = None):
+    """Lê frames + escolhe folha + mapeia + standardiza, com retry resiliente:
+    se a folha escolhida não produz linhas válidas, tenta TODAS as outras
+    (espírito REA — iterar sobre as evidências antes de desistir).
+    Devolve (df_std_rows: DataFrame, sheet_name, mapping, headers) ou
+    (DataFrame vazio, sheet_name, mapping, headers) se nada for legível."""
     sheet_name = str(sheet) if sheet else es.pick_best_sheet(frames)
     if sheet_name not in frames:
         sheet_name = es.pick_best_sheet(frames)
@@ -1175,13 +1129,68 @@ def apply_and_build(file_content: bytes, filename: str, plan: list,
 
     rows, _ = es.standardize_frame(df_raw, mapping)
     if not rows:
-        raise ValueError("Nenhuma linha válida para aplicar o plano.")
-    df = pd.DataFrame(rows)
+        for alt_name, alt_df in frames.items():
+            if str(alt_name) == str(sheet_name):
+                continue
+            alt_mapping = es.map_columns([str(c) for c in alt_df.columns])
+            alt_rows, _ = es.standardize_frame(alt_df, alt_mapping)
+            if alt_rows:
+                sheet_name, df_raw, mapping, rows = alt_name, alt_df, alt_mapping, alt_rows
+                break
+
     headers = {}
     for canon, orig in (mapping or {}).items():
         if canon in CANON_LABELS_PT and orig:
             headers[canon] = str(orig)
+    return pd.DataFrame(rows), sheet_name, mapping, headers
 
+
+def chat(file_content: bytes, filename: str, question: str,
+         sheet: str = None, mapping_json: str = None,
+         history: list = None) -> dict:
+    """Upload + pergunta → resposta completa do Copiloto."""
+    frames = es.read_uploaded_file(file_content, filename)
+    df, sheet_name, _mapping, headers = _read_std_frame(frames, sheet, mapping_json)
+
+    if df.empty:
+        cols = ", ".join(str(c) for c in list(frames.get(sheet_name, pd.DataFrame()).columns)[:8]) or "—"
+        return {
+            "intent": "explain", "model_used": "rule-engine",
+            "answer": "Não consegui ler linhas válidas desta folha com o "
+                      "mapeamento automático. Verifique se a folha escolhida "
+                      "contém pelo menos **Valor** e **Data** (sem títulos antes "
+                      "dos cabeçalhos), ou ajuste o mapeamento na aba *Importar* "
+                      "e tente de novo. Colunas detetadas: " + cols + ".",
+            "sheet": sheet_name,
+            "data_context": {"rows": 0, "columns": []},
+            "operations_applied": [], "plan": [],
+            "result": {"columns": [], "rows": [], "shown": 0, "total_rows": 0,
+                       "numeric": {}},
+            "formulas": suggest_formulas(pd.DataFrame(columns=list(CANON_LABELS_PT)),
+                                         headers),
+            "charts": [], "followups": [],
+        }
+    return _chat_core(df, sheet_name, headers, question, history)
+
+
+def apply_and_build(file_content: bytes, filename: str, plan: list,
+                    sheet: str = None, mapping_json: str = None,
+                    title: str = None) -> tuple:
+    """
+    Reproduz o plano confirmado e devolve (bytes_xlsx, nome_ficheiro).
+    O workbook inclui a Tabela 'tblDados', KPIs vivos e a folha de Fórmulas.
+    """
+    frames = es.read_uploaded_file(file_content, filename)
+    df, sheet_name, mapping, headers = _read_std_frame(frames, sheet, mapping_json)
+
+    if df.empty:
+        cols = ", ".join(str(c) for c in list(frames.get(sheet_name, pd.DataFrame()).columns)[:8]) or "—"
+        raise ValueError(
+            "Não consegui ler linhas válidas deste ficheiro: preciso de colunas "
+            "reconhecíveis de Valor e Data (com valores nas primeiras linhas, sem "
+            "títulos antes dos cabeçalhos). Colunas detetadas nesta folha: "
+            f"{cols}. Opções: ajuste o mapeamento na aba Importar do Excel "
+            "Studio, ou verifique se a folha correta contém os dados.")
     ops = _validate_ops(plan, df)
     df2, _ = apply_operations(df, ops)
     formulas = suggest_formulas(df, headers)
