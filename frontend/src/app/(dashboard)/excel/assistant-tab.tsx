@@ -104,6 +104,7 @@ export default function AssistantTab() {
       const fd = new FormData()
       fd.append('file', file)
       fd.append('plan', JSON.stringify(last?.data?.plan || []))
+      if (last?.data?.sheet) fd.append('sheet', last.data.sheet)
       const r = await apiFetch('/excel/assistant/apply', { method: 'POST', body: fd })
       if (!r.ok) {
         const data = await r.json().catch(() => ({}))
@@ -209,16 +210,19 @@ export default function AssistantTab() {
       </Card>
 
       {/* Ações sobre a última resposta */}
-      {messages.some(m => m.role === 'assistant' && m.data) && (
-        <div className="flex flex-wrap items-center gap-3">
-          <button onClick={applyAndDownload} disabled={!file || applying}
+      {messages.some(m => m.role === 'assistant' && m.data) && (() => {
+        const last = [...messages].reverse().find(m => m.role === 'assistant' && m.data)
+        const unreadable = (last?.data?.result?.total_rows ?? 1) === 0
+        return (<>
+          <button onClick={applyAndDownload} disabled={!file || applying || unreadable}
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium disabled:opacity-40">
             {applying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
             Aplicar plano e baixar .xlsx (KPIs vivos + folha de fórmulas)
           </button>
+          {unreadable && <span className="text-xs text-amber-400">O Copiloto não conseguiu ler linhas válidas deste ficheiro — ajuste o mapeamento na aba Importar.</span>}
           {!file && <span className="text-xs text-amber-400">O download exige o ficheiro original (não funciona com a base de dados).</span>}
-        </div>
-      )}
+        </>)
+      })()}
     </div>
   )
 }
