@@ -43,7 +43,10 @@ ações de 1 clique (importar / relatório premium / copiloto). Reconciliação 
 cruze 2 ficheiros ou contra a base de dados sem configurar nada. **Dossiê
 completo**: 1 clique que importa os dados, gera o painel REA e consolida tudo
 num único workbook (Dossiê, Painel, Qualidade, Benford, Duplicados,
-Fraccionamento, Redondos, Dados).
+Fraccionamento, Redondos, Dados). **Alertas sugeridos**: os padrões detetados
+(fim-de-semana, transações acima da materialidade, concentração por fornecedor)
+viram cartões com a regra pronta — um clique cria o alerta no BI Studio, que
+passa a notificar quando o padrão voltar a aparecer nos dados importados.
 
 ### Copiloto IA (NL → Excel)
 

@@ -365,3 +365,95 @@ class DossierApiTest(TestCase):
         r2 = self.client.post("/django/api/excel/auto/dossier", {}, format="multipart")
         self.assertEqual(r2.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("file", str(r2.data.get("error", "")).lower())
+
+
+CONC = pd.DataFrame([
+    {"Documento": f"C-{i}", "Fornecedor": "Alpha" if i < 8 else f"Outro-{i}",
+     "Valor": 1000.0 + i * 3, "Data": "2025-03-10", "Categoria": "TI", "Estado": "Pending"}
+    for i in range(10)])
+
+
+class AlertSuggestionsTest(TestCase):
+    """Alertas sugeridos — padrões detetados viram regras MeasureAlert (1 clique)."""
+
+    def _analyze(self, df, name="a.xlsx", **kw):
+        return auto.auto_analyze(to_xlsx(df), name, **kw)
+
+    def test_suggestions_are_valid_bi_rules(self):
+        from dashboard.bi_service import _validate as validate_measure, _validate_filter
+        r = self._analyze(CLEAN)
+        sugs = r.get("alert_suggestions")
+        self.assertIsInstance(sugs, list)
+        keys = {s["key"] for s in sugs}
+        # CLEAN: fim-de-semana presente, fornecedores equilibrados (sem concentração)
+        self.assertIn("weekend", keys)
+        self.assertIn("materialidade", keys)
+        self.assertNotIn("concentracao", keys)
+        for s in sugs:
+            validate_measure(s["rule"]["measure"])
+            for f in s["rule"].get("filters", []):
+                _validate_filter(f)
+            self.assertIn(s["rule"]["comparator"], ("gt", "lt", "gte", "lte"))
+            self.assertTrue(s["rule"]["name"])
+            self.assertTrue(s["why"])
+
+    def test_weekend_rule_detects_after_import(self):
+        from dashboard.models import MeasureAlert, Transaction
+        from dashboard.bi_views import evaluate_measure_alert
+        r = self._analyze(CLEAN)
+        rule = {x["key"]: x for x in r["alert_suggestions"]}["weekend"]["rule"]
+        # importa o ficheiro e cria o alerta a partir da sugestão
+        created, dups, _ = auto.import_standardized(
+            [{"transaction_id": f"NF-{i}", "vendor": f"Forn-{i % 3}",
+              "amount": 100.0 + i * 13.7, "currency": "EUR",
+              "timestamp": f"2025-03-{(i % 28) + 1:02d}",
+              "category": f"Cat-{i % 2}", "user_id": "u", "status": "Pending"}
+             for i in range(30)], "week.xlsx", uploaded_by="aud",
+            sheet_name="Dados", mapping={}, skipped=[])
+        self.assertEqual(created, 30)
+        a = MeasureAlert.objects.create(
+            name=rule["name"], measure=rule["measure"], filters=rule["filters"],
+            comparator=rule["comparator"], threshold=rule["threshold"],
+            created_by="aud")
+        state, value, _ = evaluate_measure_alert(a)
+        # CLEAN tem linhas em sáb/dom (2025-03-01=Saturday, 2025-03-02=Sunday)
+        self.assertEqual(state, "breach")
+        self.assertGreaterEqual(value, 2)
+        self.assertEqual(MeasureAlert.objects.count(), 1)
+        self.assertTrue(Transaction.objects.exists())
+
+    def test_materialidade_threshold_and_count(self):
+        r = self._analyze(CLEAN, threshold=200.0)
+        s = {x["key"]: x for x in r["alert_suggestions"]}["materialidade"]
+        self.assertIn("200,00", s["rule"]["name"])
+        # 22 linhas de CLEAN têm valor ≥ 200 (100 + i*13.7, i ≥ 8)
+        self.assertTrue(s["why"].startswith("22 transação"))
+        f = s["rule"]["measure"]["filters"][0]
+        self.assertEqual(f["field"], "amount")
+        self.assertEqual(f["op"], "gte")
+        self.assertEqual(float(f["value"]), 200.0)
+
+    def test_concentration_suggestion(self):
+        r = self._analyze(CONC)
+        s = {x["key"]: x for x in r["alert_suggestions"]}.get("concentracao")
+        self.assertIsNotNone(s)
+        self.assertEqual(s["rule"]["name"], "Concentração: Alpha")
+        f = s["rule"]["measure"]["filters"][0]
+        self.assertEqual(f["field"], "vendor")
+        self.assertEqual(f["value"], "Alpha")
+        self.assertEqual(s["rule"]["comparator"], "gte")
+        self.assertGreater(float(s["rule"]["threshold"]), 0)
+
+    def test_api_accepts_suggestion_rule(self):
+        """Regra sugerida passa na validação da API /bi/alerts (201) e 409 em duplicado."""
+        from dashboard.models import MeasureAlert
+        self.client = APIClient()
+        ApiToken.objects.create(token="tok-sug-admin", user_id="sug_admin", role="admin")
+        self.client.credentials(HTTP_AUTHORIZATION="Bearer tok-sug-admin")
+        r = self._analyze(CLEAN)
+        rule = {x["key"]: x for x in r["alert_suggestions"]}["weekend"]["rule"]
+        resp = self.client.post("/django/api/bi/alerts", rule, format="json")
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(MeasureAlert.objects.filter(name=rule["name"]).exists())
+        resp2 = self.client.post("/django/api/bi/alerts", rule, format="json")
+        self.assertEqual(resp2.status_code, 409)

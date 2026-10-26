@@ -238,6 +238,73 @@ def _insights(result: dict) -> list:
     return (core + flags)[:10]
 
 
+def _alert_suggestions(profile: dict, analyses: dict, threshold: float,
+                       top_vendors: list, above_count: int) -> list:
+    """Sugestões de alertas BI (MeasureAlert) a partir dos padrões detetados.
+
+    Só sugere padrões expressáveis na gramática do motor BI — cada `rule` é
+    válida para validate_measure/_validate_filter e pronta para POST /bi/alerts
+    (avaliada depois sobre as transações importadas, via BI Studio › Alertas).
+    """
+    out = []
+
+    wk = (analyses.get("weekend") or {}).get("count") or 0
+    if wk:
+        out.append({
+            "key": "weekend",
+            "title": "Transações ao fim de semana",
+            "why": f"{wk} transação(ões) deste ficheiro foram registadas ao sábado/"
+                   "domingo — padrão típico de lançamentos fora do horário útil.",
+            "rule": {
+                "name": "Transações ao fim de semana",
+                "measure": {"op": "calc",
+                            "measure": {"op": "agg", "agg": "count", "field": "id"},
+                            "filters": [{"field": "weekday", "op": "in",
+                                         "value": ["Saturday", "Sunday"]}]},
+                "filters": [], "comparator": "gt", "threshold": 0, "active": True,
+            },
+        })
+
+    if threshold and float(threshold) > 0:
+        t = abs(float(threshold))
+        ja = (f"{above_count} transação(ões) do ficheiro já ultrapassam "
+              f"{_fmt_eur(t)}." if above_count else
+              "Nenhuma transação atual ultrapassa o limiar — a regra fica a "
+              "monitorizar futuras importações.")
+        out.append({
+            "key": "materialidade",
+            "title": f"Transações acima da materialidade (≥ {_fmt_eur(t)})",
+            "why": ja,
+            "rule": {
+                "name": f"Transações acima de {_fmt_eur(t)}",
+                "measure": {"op": "calc",
+                            "measure": {"op": "agg", "agg": "count", "field": "id"},
+                            "filters": [{"field": "amount", "op": "gte", "value": t}]},
+                "filters": [], "comparator": "gt", "threshold": 0, "active": True,
+            },
+        })
+
+    top = top_vendors or []
+    if len(top) > 1 and (top[0].get("share") or 0) >= 40:
+        v = top[0]
+        out.append({
+            "key": "concentracao",
+            "title": f"Concentração no fornecedor {v['name']}",
+            "why": f"{v['name']} concentra {v['share']}% do valor do ficheiro "
+                   f"({_fmt_eur(v['total'])}) — dependência a monitorizar.",
+            "rule": {
+                "name": f"Concentração: {v['name']}"[:120],
+                "measure": {"op": "calc",
+                            "measure": {"op": "agg", "agg": "sum", "field": "amount"},
+                            "filters": [{"field": "vendor", "op": "eq",
+                                         "value": str(v["name"])}]},
+                "filters": [], "comparator": "gte",
+                "threshold": float(v["total"]), "active": True,
+            },
+        })
+    return out
+
+
 def auto_analyze(content: bytes, filename: str, threshold: float = 10000.0,
                  sheet: str = None) -> dict:
     """UMA chamada = análise completa (leitura pura — não importa nada)."""
@@ -297,6 +364,8 @@ def auto_analyze(content: bytes, filename: str, threshold: float = 10000.0,
     by_category = _top("category")
 
     quality = _quality(rows, skipped, mapping, df_raw, analyses)
+    above_count = int((amounts.abs() >= abs(float(threshold or 0))).sum()) \
+        if len(amounts) and threshold else 0
 
     risk = {
         "score": analyses.get("risk_score", 0),
@@ -327,6 +396,8 @@ def auto_analyze(content: bytes, filename: str, threshold: float = 10000.0,
         "next_steps": ["import", "report", "copilot"],
     }
     result["insights"] = _insights(result)
+    result["alert_suggestions"] = _alert_suggestions(
+        profile, analyses, threshold, top_vendors, above_count)
     return result
 
 

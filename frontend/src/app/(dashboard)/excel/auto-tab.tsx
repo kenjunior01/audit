@@ -6,6 +6,7 @@
  * insights e próximos passos. Importar é sempre um clique explícito.
  * Reconciliação Auto: 2 ficheiros de uma vez, ou contra a base de dados.
  * Dossiê completo: 1 clique → importa, gera o painel REA e consolida tudo.
+ * Alertas sugeridos: padrões detetados viram regras de alerta BI com 1 clique.
  */
 import { useRef, useState } from 'react'
 import { apiFetch } from '@/lib/api'
@@ -14,7 +15,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import {
   Zap, Upload, Loader2, CheckCircle2, AlertTriangle, XCircle,
   FileDown, Sparkles, Database, GitBranch, ArrowRight, FileSpreadsheet,
-  GitCompareArrows, FileArchive,
+  GitCompareArrows, FileArchive, Bell, BellPlus, Check,
 } from 'lucide-react'
 
 const MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -43,7 +44,17 @@ type AutoResult = {
   top_vendors: TopItem[]
   by_category: TopItem[]
   next_steps: string[]
+  alert_suggestions?: AlertSuggestion[]
 }
+type AlertRule = {
+  name: string
+  measure: any
+  filters: any[]
+  comparator: 'gt' | 'lt' | 'gte' | 'lte'
+  threshold: number
+  active: boolean
+}
+type AlertSuggestion = { key: string; title: string; why: string; rule: AlertRule }
 type RecMatch = {
   a_id: string; b_id: string; a_vendor?: string; b_vendor?: string
   a_date?: string; b_date?: string; amount: number; weak?: boolean
@@ -122,12 +133,16 @@ export default function AutoTab({ onAskCopilot, onGoImport }: {
   const [recFileB, setRecFileB] = useState<File | null>(null)
   const [dossLoading, setDossLoading] = useState(false)
   const [dossMsg, setDossMsg] = useState('')
+  const [alertStates, setAlertStates] = useState<Record<string, string>>({})
+  const [alertBusy, setAlertBusy] = useState('')
+  const [alertErr, setAlertErr] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
   const recInputRef = useRef<HTMLInputElement>(null)
 
   const analyze = async (f: File) => {
     setLoading(true); setError(''); setResult(null); setRec(null)
     setImportMsg(''); setDossMsg(''); setRecFileB(null)
+    setAlertStates({}); setAlertErr('')
     try {
       const fd = new FormData(); fd.append('file', f)
       const r = await apiFetch('/excel/auto', { method: 'POST', body: fd })
@@ -228,8 +243,31 @@ export default function AutoTab({ onAskCopilot, onGoImport }: {
     } catch (e: any) { setRecError(e.message) } finally { setRecLoading(false) }
   }
 
+  const createAlert = async (s: AlertSuggestion) => {
+    if (alertBusy || alertStates[s.key] === 'ok') return
+    setAlertBusy(s.key); setAlertErr('')
+    try {
+      const r = await apiFetch('/bi/alerts', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(s.rule),
+      })
+      const data = await r.json().catch(() => ({}))
+      if (r.status === 409) { setAlertStates(m => ({ ...m, [s.key]: 'exists' })); return }
+      if (!r.ok) throw new Error(data.error || `Erro ${r.status}`)
+      setAlertStates(m => ({ ...m, [s.key]: 'ok' }))
+    } catch (e: any) {
+      setAlertErr(e.message); setAlertStates(m => ({ ...m, [s.key]: 'error' }))
+    } finally { setAlertBusy('') }
+  }
+
   const p = result?.profile
   const grade = result ? GRADE_STYLE[result.quality.grade] || GRADE_STYLE.C : null
+  const ruleSummary = (r: AlertRule) => {
+    const cmp = r.comparator === 'gt' ? '>' : r.comparator === 'gte' ? '≥' : r.comparator === 'lt' ? '<' : '≤'
+    const inner = r.measure?.op === 'calc' ? r.measure.measure : r.measure
+    const agg = inner?.agg === 'count' ? 'contagem' : inner?.agg === 'sum' ? 'soma' : 'valor'
+    return `${agg} ${cmp} ${fmt(r.threshold)}`
+  }
 
   return (
     <div className="space-y-4">
@@ -410,6 +448,53 @@ export default function AutoTab({ onAskCopilot, onGoImport }: {
                     <span className="text-xs text-slate-400 w-28 text-right">{fmt(v.total)} · {v.share}%</span>
                   </div>
                 ))}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Alertas sugeridos — padrões detetados viram regras com 1 clique */}
+          {!!result.alert_suggestions?.length && (
+            <Card className="bg-slate-900 border-slate-800">
+              <CardHeader_ title="Alertas sugeridos" icon={<Bell className="w-4 h-4 text-amber-400" />} />
+              <CardContent className="pt-0 space-y-3">
+                <p className="text-[11px] text-slate-500">
+                  Regras criadas a partir dos padrões detetados — ficam ativas sobre as transações
+                  importadas e disparam notificações quando o padrão aparece (BI Studio › Alertas › Avaliar).
+                </p>
+                {result.alert_suggestions.map(s => {
+                  const st = alertStates[s.key] || 'idle'
+                  return (
+                    <div key={s.key} className="flex items-start gap-3 rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                      <BellPlus className="w-4 h-4 mt-0.5 shrink-0 text-amber-400" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium text-slate-200">{s.title}</p>
+                        <p className="text-[11px] text-slate-500 mt-0.5">{s.why}</p>
+                        <span className="inline-block mt-1.5 px-2 py-0.5 rounded-full text-[10px] bg-slate-800 text-slate-300 border border-slate-700">
+                          {ruleSummary(s.rule)}
+                        </span>
+                      </div>
+                      {st === 'ok' ? (
+                        <span className="flex items-center gap-1 text-[11px] font-medium text-emerald-400 shrink-0">
+                          <Check className="w-3.5 h-3.5" /> Criado
+                        </span>
+                      ) : st === 'exists' ? (
+                        <span className="text-[11px] text-slate-400 shrink-0">Já existe</span>
+                      ) : (
+                        <button onClick={() => createAlert(s)} disabled={alertBusy === s.key}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-semibold disabled:opacity-50 shrink-0">
+                          {alertBusy === s.key ? <Loader2 className="w-3 h-3 animate-spin" /> : <BellPlus className="w-3 h-3" />}
+                          Criar alerta
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
+                {alertErr && <p className="text-[11px] text-red-300">{alertErr}</p>}
+                {Object.values(alertStates).some(v => v === 'ok' || v === 'exists') && (
+                  <a href="/bi" className="inline-flex items-center gap-1 text-[11px] text-amber-300 underline underline-offset-2">
+                    Gerir alertas no BI Studio <ArrowRight className="w-3 h-3" />
+                  </a>
+                )}
               </CardContent>
             </Card>
           )}
