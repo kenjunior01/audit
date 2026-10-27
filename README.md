@@ -47,6 +47,10 @@ Fraccionamento, Redondos, Dados). **Alertas sugeridos**: os padrões detetados
 (fim-de-semana, transações acima da materialidade, concentração por fornecedor)
 viram cartões com a regra pronta — um clique cria o alerta no BI Studio, que
 passa a notificar quando o padrão voltar a aparecer nos dados importados.
+**Alertas ao vivo**: os alertas BI são avaliados automaticamente (celery beat
+com `AUDIT_ALERTS_ENABLED=true` ou `manage.py run_bi_alerts` em cron clássico)
+e a transição ok→violação dispara notificação na Central — sem depender de
+alguém clicar em "Avaliar".
 
 ### Copiloto IA (NL → Excel)
 

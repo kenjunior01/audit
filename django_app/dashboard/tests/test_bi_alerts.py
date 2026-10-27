@@ -138,3 +138,61 @@ class AlertEndpointsTest(TestCase):
         c.credentials(HTTP_AUTHORIZATION="Bearer " + self.viewer)
         r = c.post("/django/api/bi/alerts/run", {}, format="json")
         self.assertEqual(r.status_code, 403)
+
+
+class ScheduledAlertsTest(TestCase):
+    """Alertas BI ao vivo — avaliação automática (task + management command)."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.uid = "sched.alert@x.pt"
+        _mk("SchedA", 100)
+        _mk("SchedB", 900)
+
+    def test_task_evaluates_active_and_notifies_breach(self):
+        from dashboard.tasks import run_bi_alerts
+        a = MeasureAlert.objects.create(
+            name=f"live-{uuid.uuid4().hex[:6]}", measure=MEAS,
+            comparator='gt', threshold=500, created_by=self.uid)
+        MeasureAlert.objects.create(  # inativo → não entra na ronda
+            name=f"off-{uuid.uuid4().hex[:6]}", measure=MEAS,
+            comparator='gt', threshold=0, active=False, created_by=self.uid)
+        r = run_bi_alerts()
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["evaluated"], 1)
+        self.assertEqual(r["breaches"], 1)
+        self.assertEqual(r["results"][0]["id"], a.id)
+        self.assertEqual(r["results"][0]["state"], "breach")
+        a.refresh_from_db()
+        self.assertEqual(a.last_state, "breach")
+        self.assertTrue(Notification.objects.filter(
+            recipient=self.uid, kind='bi.alert').exists())
+
+    def test_task_empty_base(self):
+        from dashboard.tasks import run_bi_alerts
+        r = run_bi_alerts()
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["evaluated"], 0)
+        self.assertEqual(r["breaches"], 0)
+        self.assertIn("0 alerta(s)", r["message"])
+
+    def test_task_survives_malformed_alert(self):
+        from dashboard.tasks import run_bi_alerts
+        MeasureAlert.objects.create(
+            name=f"bad-{uuid.uuid4().hex[:6]}",
+            measure={'op': 'agg', 'agg': 'sum', 'field': 'não_existe'},
+            comparator='gt', threshold=0, created_by=self.uid)
+        r = run_bi_alerts()
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["results"][0]["state"], "error")
+
+    def test_management_command_runs(self):
+        from io import StringIO
+        from django.core.management import call_command
+        MeasureAlert.objects.create(
+            name=f"cmd-{uuid.uuid4().hex[:6]}", measure=MEAS,
+            comparator='gt', threshold=500, created_by=self.uid)
+        out = StringIO()
+        call_command("run_bi_alerts", stdout=out)
+        self.assertIn("1 alerta(s) avaliado(s)", out.getvalue())
+        self.assertIn("1 em violação", out.getvalue())

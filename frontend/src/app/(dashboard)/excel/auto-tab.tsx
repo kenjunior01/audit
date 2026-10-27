@@ -459,7 +459,8 @@ export default function AutoTab({ onAskCopilot, onGoImport }: {
               <CardContent className="pt-0 space-y-3">
                 <p className="text-[11px] text-slate-500">
                   Regras criadas a partir dos padrões detetados — ficam ativas sobre as transações
-                  importadas e disparam notificações quando o padrão aparece (BI Studio › Alertas › Avaliar).
+                  importadas e disparam notificações quando o padrão aparece. Avaliação automática
+                  hora a hora (AUDIT_ALERTS_ENABLED) ou manual em BI Studio › Alertas.
                 </p>
                 {result.alert_suggestions.map(s => {
                   const st = alertStates[s.key] || 'idle'
