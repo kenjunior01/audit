@@ -156,7 +156,16 @@ automaticamente:
   projeção a 3 meses;
 - **Insights narrativos determinísticos** (concentração, tendência, anomalias);
 - **Slicers simples** (período em chips + clique no gráfico filtra o valor)
-  e transações recentes com drillthrough.
+  e transações recentes com drillthrough;
+- **Pergunte aos dados**: caixa Q&A em linguagem natural (reutiliza o motor
+  determinístico `/bi/qa`) — a resposta chega com gráfico, visual deduzido,
+  nível de confiança e explicação da interpretação;
+- **Alertas ao vivo**: estado das regras de monitorização criadas no Excel
+  Auto/BI Studio (ponto verde/vermelho, valor atual vs. limiar, última
+  avaliação, contagem de violações) + botão "Avaliar agora"; quando alguma
+  regra está em violação, o cabeçalho mostra o badge vermelho "N em violação".
+  A avaliação automática hora a hora continua a cargo do agendamento
+  (`run_bi_alerts` via celery beat / cron).
 
 Cada decisão do motor é devolvida em `meta.choices` com a evidência
 (espírito REA: findings com provas). Utilizadores avançados continuam com o

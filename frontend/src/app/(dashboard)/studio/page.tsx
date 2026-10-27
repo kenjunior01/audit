@@ -3,6 +3,8 @@
 // passo 5: "ir além"). Um clique: o motor faz engenharia reversa dos dados,
 // deduz dimensões/medidas e devolve um painel completo — KPIs, insights
 // narrativos, 6 visuais e drillthrough — sem qualquer configuração.
+// v2: "Pergunte aos dados" (Q&A em linguagem natural, reutiliza /bi/qa) e
+// "Alertas ao vivo" (estado das regras de monitorização + Avaliar agora).
 // Utilizadores avançados continuam com o BI Studio (/bi).
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
@@ -12,8 +14,9 @@ import {
 } from 'recharts'
 import {
   Sparkles, Lightbulb, Download, Loader2, RefreshCw, Filter, X,
-  FileSpreadsheet, BarChart3, Inbox,
+  FileSpreadsheet, BarChart3, Inbox, Send, MessageCircleQuestion, BellRing,
 } from 'lucide-react'
+import { MiniVisual } from '@/components/bi/mini-visual'
 import { apiFetch } from '@/lib/api'
 import { useRequireToken } from '@/lib/auth'
 
@@ -24,6 +27,13 @@ type Row = Record<string, any>
 type AutoPayload = {
   empty: boolean, kpis: Row[], visuals: Row, insights: string[],
   recent: Row[], meta: Row,
+}
+type QaRes = { question: string, spec: Row, kind: string, data: Row, explain: string }
+type AlertRow = {
+  id: number, name: string, measure: Row, filters: Row[],
+  comparator: 'gt' | 'lt' | 'gte' | 'lte', threshold: number, active: boolean,
+  last_value: number | null, last_state: string, last_checked_at: string | null,
+  breach_count: number,
 }
 
 const fmt = (v: any) => {
@@ -50,6 +60,38 @@ const PERIODS = [
   { key: '30', label: '30 dias' },
 ]
 
+const QA_EXAMPLES = [
+  'gastos por fornecedor', 'tendência mensal',
+  'top 5 fornecedores', 'total este ano',
+]
+
+const CMP_PT: Record<string, string> = { gt: '>', lt: '<', gte: '≥', lte: '≤' }
+
+const ago = (iso: string | null) => {
+  if (!iso) return '—'
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000)
+  if (mins < 1) return 'agora'
+  if (mins < 60) return `há ${mins} min`
+  const h = Math.round(mins / 60)
+  if (h < 24) return `há ${h} h`
+  return `há ${Math.round(h / 24)} d`
+}
+
+const ruleLabel = (a: AlertRow) => {
+  const m = a.measure?.op === 'calc' ? (a.measure.measure || {}) : (a.measure || {})
+  const agg = m.agg === 'count' ? 'contagem' : m.agg === 'sum' ? 'soma' : (m.agg || 'medida')
+  const fld = !m.field || m.field === 'id' ? '' : ` de ${m.field}`
+  return `${agg}${fld} ${CMP_PT[a.comparator] || a.comparator} ${fmt(a.threshold)}`
+}
+
+const stDot = (a: AlertRow) =>
+  !a.active ? 'bg-slate-300' : a.last_state === 'breach' ? 'bg-red-500'
+    : a.last_state === 'error' ? 'bg-amber-500' : a.last_state === 'ok' ? 'bg-emerald-500' : 'bg-slate-300'
+
+const stLabel = (a: AlertRow) =>
+  !a.active ? 'inativo' : a.last_state === 'breach' ? 'em violação'
+    : a.last_state === 'error' ? 'erro' : a.last_state === 'ok' ? 'OK' : 'sem avaliação'
+
 export default function StudioPage() {
   useRequireToken()
   const [period, setPeriod] = useState('all')
@@ -57,6 +99,18 @@ export default function StudioPage() {
   const [data, setData] = useState<AutoPayload | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+
+  // --- Q&A (pergunte aos dados)
+  const [qaText, setQaText] = useState('')
+  const [qaRes, setQaRes] = useState<QaRes | null>(null)
+  const [qaBusy, setQaBusy] = useState(false)
+  const [qaErr, setQaErr] = useState('')
+
+  // --- alertas ao vivo
+  const [alerts, setAlerts] = useState<AlertRow[]>([])
+  const [runBusy, setRunBusy] = useState(false)
+  const [alertsErr, setAlertsErr] = useState('')
+  const [runMsg, setRunMsg] = useState('')
 
   const filters = useMemo(() => {
     const f: Row[] = []
@@ -137,6 +191,48 @@ export default function StudioPage() {
     setVendorSel(vendorSel === value ? '' : value)
   }
 
+  async function askQ(q?: string) {
+    const question = (q ?? qaText).trim()
+    if (!question || qaBusy) return
+    setQaBusy(true); setQaErr('')
+    try {
+      const r = await apiFetch('/bi/qa', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question }),
+      })
+      const d = await r.json()
+      if (!r.ok) { setQaErr(d.error || `erro ${r.status}`); return }
+      setQaRes(d); setQaText('')
+    } catch { setQaErr('sem ligação ao Q&A') } finally { setQaBusy(false) }
+  }
+
+  const loadAlerts = useCallback(async () => {
+    try {
+      const r = await apiFetch('/bi/alerts')
+      if (r.ok) { const d = await r.json(); setAlerts(d.results || []) }
+    } catch { /* cartão auxiliar — falha silenciosa */ }
+  }, [])
+
+  useEffect(() => { loadAlerts() /* eslint-disable-line react-hooks/exhaustive-deps */ }, [loadAlerts])
+
+  async function runAlerts() {
+    setRunBusy(true); setAlertsErr(''); setRunMsg('')
+    try {
+      const r = await apiFetch('/bi/alerts/run', { method: 'POST' })
+      const d = await r.json()
+      if (!r.ok) { setAlertsErr(d.error || `erro ${r.status}`); return }
+      const nb = (d.results || []).filter((x: Row) => x.state === 'breach').length
+      setRunMsg(nb ? `${d.evaluated} avaliado(s) — ${nb} em violação` : `${d.evaluated} avaliado(s) — tudo dentro dos limiares`)
+      await loadAlerts()
+    } catch { setAlertsErr('falha ao avaliar os alertas') } finally { setRunBusy(false) }
+  }
+
+  const alertsSorted = useMemo(() => {
+    const rank = (a: AlertRow) => (a.active && a.last_state === 'breach' ? 0 : a.active ? 1 : 2)
+    return [...alerts].sort((x, y) => rank(x) - rank(y))
+  }, [alerts])
+  const nBreach = alerts.filter(a => a.active && a.last_state === 'breach').length
+
   return (
     <div className="space-y-5">
       {/* ------------------------------------------------ cabeçalho */}
@@ -150,6 +246,11 @@ export default function StudioPage() {
           </p>
         </div>
         <div className="flex gap-2 flex-wrap items-center">
+          {nBreach > 0 && (
+            <a href="#alertas-auto" className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 flex items-center gap-1.5">
+              <BellRing className="w-3.5 h-3.5" /> {nBreach} em violação
+            </a>
+          )}
           <button className={btnP} onClick={() => generate()} disabled={busy}>
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
             Gerar painel
@@ -190,6 +291,44 @@ export default function StudioPage() {
             {data.meta.records} transações {data.meta.period?.start ? `· ${data.meta.period.start} → ${data.meta.period.end}` : ''}
           </span>
         ) : null}
+      </div>
+
+      {/* ------------------------------------------------- Q&A — pergunte aos dados */}
+      <div className={card}>
+        <div className="flex items-center gap-2 mb-2">
+          <MessageCircleQuestion className="w-4 h-4 text-amber-500" />
+          <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">Pergunte aos dados</p>
+          <span className="text-[11px] text-slate-400">em linguagem natural — resposta com gráfico</span>
+        </div>
+        <div className="flex gap-2">
+          <input
+            value={qaText}
+            onChange={e => setQaText(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') askQ() }}
+            placeholder="ex.: gastos por fornecedor no último ano"
+            className="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <button className={btnP} onClick={() => askQ()} disabled={qaBusy || !qaText.trim()}>
+            {qaBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} Perguntar
+          </button>
+        </div>
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          {QA_EXAMPLES.map(ex => (
+            <button key={ex} className="px-2.5 py-1 rounded-full text-[11px] border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-blue-400 hover:text-blue-600 transition-colors"
+                    onClick={() => askQ(ex)}>{ex}</button>
+          ))}
+        </div>
+        {qaErr && <p className="text-sm text-red-500 mt-2">{qaErr}</p>}
+        {qaRes && (
+          <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <span className="px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-[11px]">{qaRes.spec?.visual}</span>
+              <span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-[11px]">confiança {(100 * (qaRes.spec?.confidence || 0)).toFixed(0)}%</span>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">{qaRes.explain}</p>
+            <MiniVisual kind={qaRes.kind} data={qaRes.data} />
+          </div>
+        )}
       </div>
 
       {err && <p className="text-sm text-red-500">{err}</p>}
@@ -242,6 +381,47 @@ export default function StudioPage() {
           </ul>
         </div>
       )}
+
+      {/* ------------------------------------------------- alertas ao vivo */}
+      <div className={card} id="alertas-auto" style={{ scrollMarginTop: 16 }}>
+        <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+          <div className="flex items-center gap-2">
+            <BellRing className="w-4 h-4 text-blue-600" />
+            <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">Alertas ao vivo</p>
+            <span className="text-[11px] text-slate-400">regras avaliadas automaticamente hora a hora</span>
+          </div>
+          <button className={btnS} onClick={runAlerts} disabled={runBusy}>
+            {runBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Avaliar agora
+          </button>
+        </div>
+        {runMsg && <p className={`text-xs mb-2 ${runMsg.includes('violação') ? 'text-red-500' : 'text-emerald-600'}`}>{runMsg}</p>}
+        {alertsErr && <p className="text-xs text-red-500 mb-2">{alertsErr}</p>}
+        {alertsSorted.length === 0 ? (
+          <p className="text-xs text-slate-400">
+            Sem regras de monitorização ainda — crie sugestões com 1 clique na{' '}
+            <a href="/excel" className="text-blue-600 hover:underline">Análise Auto do Excel Studio</a> ou no{' '}
+            <a href="/bi" className="text-blue-600 hover:underline">BI Studio</a>.
+          </p>
+        ) : (
+          <div className="space-y-1.5">
+            {alertsSorted.map(a => (
+              <div key={a.id} className="flex items-center gap-2.5 flex-wrap text-xs py-1 border-b border-slate-100 dark:border-slate-800 last:border-0">
+                <span className={`w-2 h-2 rounded-full shrink-0 ${stDot(a)}`} title={stLabel(a)} />
+                <span className="font-medium text-gray-700 dark:text-slate-200">{a.name}</span>
+                <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[10px] text-slate-500 dark:text-slate-400">{ruleLabel(a)}</span>
+                {a.last_value != null && (
+                  <span className="text-slate-500 dark:text-slate-400">valor atual: <b className={a.last_state === 'breach' ? 'text-red-500' : ''}>{fmt(a.last_value)}</b></span>
+                )}
+                {a.breach_count > 0 && <span className="text-red-500">×{a.breach_count} violação(ões)</span>}
+                <span className="text-slate-400 ml-auto">{stLabel(a)} · {ago(a.last_checked_at)}</span>
+              </div>
+            ))}
+            <a href="/bi" className="text-[11px] text-blue-600 hover:underline inline-flex items-center gap-1">
+              Gerir alertas no BI Studio
+            </a>
+          </div>
+        )}
+      </div>
 
       {/* ------------------------------------------------- bar + pie */}
       {barV && (
