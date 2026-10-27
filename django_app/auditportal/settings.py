@@ -180,12 +180,21 @@ AUDIT_DIGEST_EMAILS = [e.strip() for e in os.environ.get(
 AUDIT_DIGEST_ENABLED = os.environ.get("AUDIT_DIGEST_ENABLED", "False").lower() in ("1", "true", "yes", "on")
 AUDIT_DIGEST_HOUR = int(os.environ.get("AUDIT_DIGEST_HOUR", 7))
 DEFAULT_FROM_EMAIL = os.environ.get("AUDIT_DEFAULT_FROM_EMAIL", "copiloto@audit-platform")
-if AUDIT_DIGEST_ENABLED:
+# Alertas BI ao vivo: avaliação automática de todos os alertas ativos
+# (hora a hora por omissão) — notifica a transição ok→violação.
+AUDIT_ALERTS_ENABLED = os.environ.get("AUDIT_ALERTS_ENABLED", "False").lower() in ("1", "true", "yes", "on")
+_beat_schedule = {}
+if AUDIT_DIGEST_ENABLED or AUDIT_ALERTS_ENABLED:
     from celery.schedules import crontab
-    CELERY_BEAT_SCHEDULE = {
-        "copilot-daily-digest": {
-            "task": "dashboard.tasks.send_copilot_digest",
-            "schedule": crontab(hour=AUDIT_DIGEST_HOUR, minute=0),
-            "args": ("daily",),
-        },
+if AUDIT_DIGEST_ENABLED:
+    _beat_schedule["copilot-daily-digest"] = {
+        "task": "dashboard.tasks.send_copilot_digest",
+        "schedule": crontab(hour=AUDIT_DIGEST_HOUR, minute=0),
+        "args": ("daily",),
     }
+if AUDIT_ALERTS_ENABLED:
+    _beat_schedule["bi-alerts-hourly"] = {
+        "task": "dashboard.tasks.run_bi_alerts",
+        "schedule": crontab(minute=0),
+    }
+CELERY_BEAT_SCHEDULE = _beat_schedule

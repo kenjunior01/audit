@@ -229,3 +229,34 @@ def send_copilot_digest(period="daily", send_email=True):
             "digest": digest,
             "message": f"Digest {period} {verb} "
                        f"{len(recipients) if status == 'sent' else 0} destinatário(s)"}
+
+
+# ---------------------------------------------------------------------------
+# Alertas BI ao vivo — avaliação automática (celery beat / cron clássico)
+# ---------------------------------------------------------------------------
+
+@shared_task
+def run_bi_alerts():
+    """Avalia todos os alertas BI ativos e notifica violações novas (transição
+    ok→breach dispara notificação via Central de Notificações — ver
+    evaluate_measure_alert). Agendável via celery beat
+    (AUDIT_ALERTS_ENABLED=true), por cron clássico (`manage.py run_bi_alerts`)
+    ou manualmente via POST /bi/alerts/run (auditor/admin)."""
+    from .bi_views import evaluate_measure_alert
+    from .models import MeasureAlert
+
+    results = []
+    for a in MeasureAlert.objects.filter(active=True):
+        try:
+            state, value, notified = evaluate_measure_alert(a)
+            results.append({"id": a.id, "name": a.name, "state": state,
+                            "value": value, "notified": notified})
+        except Exception as e:  # um alerta malformado nunca derruba a ronda
+            logger.warning("alerta BI %s falhou: %s", a.pk, e)
+            results.append({"id": a.id, "name": a.name, "state": "error",
+                            "value": None, "notified": False})
+    breaches = sum(1 for r in results if r["state"] == "breach")
+    return {"ok": True, "evaluated": len(results), "breaches": breaches,
+            "results": results,
+            "message": f"{len(results)} alerta(s) avaliado(s), "
+                       f"{breaches} em violação"}
