@@ -43,7 +43,7 @@ jobs:
             dashboard.tests.test_copilot_v4 \
             dashboard.tests.test_copilot_v3 \
             dashboard.tests.test_copilot \
-            dashboard.tests.test_excel_copilot \
+            dashboard.tests.test_excel_compare dashboard.tests.test_excel_copilot \
             dashboard.tests.test_excel_studio \
             dashboard.tests.test_critical_flows \
             dashboard.tests.test_health \

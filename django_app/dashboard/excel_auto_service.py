@@ -788,6 +788,258 @@ def build_reconcile_report(content_a: bytes, name_a: str,
 
 
 # ---------------------------------------------------------------------------
+# Análise Comparativa — o que mudou entre dois períodos (A → B)
+# ---------------------------------------------------------------------------
+
+def _cmp_overview(df: pd.DataFrame, threshold: float) -> dict:
+    """Overview compacto de um df canônico (rows canônicas do standardize)."""
+    amounts = pd.to_numeric(df["amount"], errors="coerce").dropna()
+    dates = pd.to_datetime(df["timestamp"], errors="coerce").dropna()
+    n_weekend = 0
+    if len(dates):
+        n_weekend = int(dates.dt.day_name().isin(["Saturday", "Sunday"]).sum())
+    ids = df["transaction_id"].astype(str)
+    return {
+        "rows": int(len(df)),
+        "total": float(amounts.sum()),
+        "avg": float(amounts.mean()) if len(amounts) else 0.0,
+        "max": float(amounts.max()) if len(amounts) else 0.0,
+        "n_vendors": int(df["vendor"].nunique()),
+        "weekend": n_weekend,
+        "duplicates": int(ids.duplicated().sum()),
+        "above_threshold": int((amounts.abs() >= abs(float(threshold))).sum()),
+        "period": ({"start": dates.min().date().isoformat(),
+                    "end": dates.max().date().isoformat()} if len(dates) else {}),
+    }
+
+
+def _pct(delta: float, base: float) -> float:
+    """Variação % honesta: denominador |base|; base 0 → 0.0 (evita ∞)."""
+    if not base:
+        return 0.0
+    return delta / abs(base) * 100.0
+
+
+def _verdict_compare(ov_a: dict, ov_b: dict, rep_count: int,
+                     new_share: float) -> tuple:
+    """(rótulo, nível, mensagem) determinísticos para a comparação."""
+    tot_a, tot_b = ov_a["total"], ov_b["total"]
+    pct = _pct(tot_b - tot_a, tot_a)
+    flags = (1 if rep_count > 0 else 0) + (1 if new_share >= 0.2 else 0)
+    ap = abs(pct)
+    if ap < 5 and flags == 0:
+        return ("Períodos estáveis", "ok",
+                f"Total varia {pct:+.1f}% entre A e B, sem sinais de alerta.")
+    if ap >= 30 or flags >= 2:
+        msg = f"Total varia {pct:+.1f}%"
+        if rep_count:
+            msg += f" e há {rep_count} documento(s) repetido(s) nos dois ficheiros"
+        return ("Variação acentuada", "high", msg + " — investigação recomendada.")
+    return ("Variação moderada", "warn",
+            f"Total varia {pct:+.1f}% entre períodos — rever os principais movimentos.")
+
+
+def auto_compare(content_a: bytes, name_a: str,
+                 content_b: bytes, name_b: str,
+                 sheet: str = None, threshold: float = 10000.0) -> dict:
+    """Análise comparativa de 1 clique entre dois períodos (A = base, B = novo).
+    Folha+mapeamento automáticos nos dois lados. Devolve overview com deltas,
+    movimentos por fornecedor (aumentos/reduções/novos/desaparecidos), padrões
+    (fim-de-semana, duplicados, materialidade), documentos repetidos entre
+    ficheiros, veredicto e insights narrativos."""
+    frames_a = es.read_uploaded_file(content_a, name_a)
+    sheet_a, _, rows_a, _, _ = _read_auto_frame(frames_a, sheet=sheet,
+                                                filename=name_a)
+    df_a = pd.DataFrame(rows_a)
+    frames_b = es.read_uploaded_file(content_b, name_b)
+    sheet_b, _, rows_b, _, _ = _read_auto_frame(frames_b, sheet=sheet,
+                                                filename=name_b)
+    df_b = pd.DataFrame(rows_b)
+
+    if df_a.empty or df_b.empty:
+        raise ValueError("Não consegui ler linhas válidas nos dois ficheiros — "
+                         "preciso de colunas reconhecíveis de Valor e Data em A e B.")
+
+    ov_a = _cmp_overview(df_a, threshold)
+    ov_b = _cmp_overview(df_b, threshold)
+
+    ta = df_a.assign(v=df_a["vendor"].fillna("(sem fornecedor)")).groupby("v")["amount"].sum()
+    tb = df_b.assign(v=df_b["vendor"].fillna("(sem fornecedor)")).groupby("v")["amount"].sum()
+    deltas = [{"vendor": v,
+               "a": float(ta.get(v, 0.0)), "b": float(tb.get(v, 0.0))}
+              for v in sorted(set(ta.index) | set(tb.index))]
+    for d in deltas:
+        d["delta"] = d["b"] - d["a"]
+        d["pct"] = round(_pct(d["delta"], d["a"]), 1)
+    increases = sorted([d for d in deltas if d["delta"] > 0.005],
+                       key=lambda d: d["delta"], reverse=True)[:5]
+    decreases = sorted([d for d in deltas if d["delta"] < -0.005],
+                       key=lambda d: d["delta"])[:5]
+    new_vendors = sorted([d for d in deltas if d["a"] == 0 and d["b"] > 0],
+                         key=lambda d: d["b"], reverse=True)[:10]
+    dropped = sorted([d for d in deltas if d["b"] == 0 and d["a"] > 0],
+                     key=lambda d: d["a"], reverse=True)[:10]
+    new_total = sum(d["b"] for d in new_vendors)
+    new_share = (new_total / ov_b["total"]) if ov_b["total"] else 0.0
+
+    # documentos (transaction_id) presentes nos DOIS ficheiros
+    ia = df_a[["transaction_id", "vendor", "amount"]].copy()
+    ia["vendor"] = ia["vendor"].fillna("(sem fornecedor)")
+    ib = df_b[["transaction_id", "vendor", "amount"]].copy()
+    ib["vendor"] = ib["vendor"].fillna("(sem fornecedor)")
+    m = ia.merge(ib, on="transaction_id", suffixes=("_a", "_b"))
+    rep_count = int(m["transaction_id"].nunique()) if len(m) else 0
+    rep_rows = []
+    for r in m.itertuples(index=False):
+        va_, vb_ = pd.to_numeric(r.amount_a, errors="coerce"), \
+            pd.to_numeric(r.amount_b, errors="coerce")
+        rep_rows.append({
+            "id": str(r.transaction_id),
+            "vendor_a": r.vendor_a, "vendor_b": r.vendor_b,
+            "amount_a": float(va_) if pd.notna(va_) else None,
+            "amount_b": float(vb_) if pd.notna(vb_) else None,
+            "same_amount": bool(pd.notna(va_) and pd.notna(vb_)
+                                and abs(va_ - vb_) <= 0.01),
+        })
+    rep_rows = rep_rows[:20]
+
+    label, level, message = _verdict_compare(ov_a, ov_b, rep_count, new_share)
+
+    tot_delta = ov_b["total"] - ov_a["total"]
+    insights = [
+        f"Linhas: {ov_a['rows']} → {ov_b['rows']} ({ov_b['rows'] - ov_a['rows']:+d}); "
+        f"total: {_fmt_eur(ov_a['total'])} → {_fmt_eur(ov_b['total'])} "
+        f"({_pct(tot_delta, ov_a['total']):+.1f}%).",
+    ]
+    if ov_a.get("period") and ov_b.get("period"):
+        insights.append(
+            f"Períodos: A {ov_a['period']['start']} → {ov_a['period']['end']} · "
+            f"B {ov_b['period']['start']} → {ov_b['period']['end']}.")
+    if increases:
+        d0 = increases[0]
+        insights.append(
+            f"Maior aumento: {d0['vendor']} ({_fmt_eur(d0['a'])} → {_fmt_eur(d0['b'])}, "
+            f"{d0['pct']:+.1f}%).")
+    if decreases:
+        d0 = decreases[0]
+        insights.append(
+            f"Maior redução: {d0['vendor']} ({_fmt_eur(d0['a'])} → {_fmt_eur(d0['b'])}, "
+            f"{d0['pct']:+.1f}%).")
+    if new_vendors:
+        insights.append(
+            f"{len(new_vendors)} fornecedor(es) novo(s) em B — {_fmt_eur(new_total)} "
+            f"({new_share * 100:.0f}% do total de B): "
+            + ", ".join(d["vendor"] for d in new_vendors[:3]) + ".")
+    if dropped:
+        insights.append(
+            f"{len(dropped)} fornecedor(es) sem movimentos em B: "
+            + ", ".join(d["vendor"] for d in dropped[:3]) + ".")
+    if ov_b["weekend"] != ov_a["weekend"]:
+        insights.append(
+            f"Fim-de-semana: {ov_a['weekend']} → {ov_b['weekend']} transações "
+            f"({ov_b['weekend'] - ov_a['weekend']:+d}).")
+    if ov_b["above_threshold"] != ov_a["above_threshold"]:
+        insights.append(
+            f"Acima da materialidade ({_fmt_eur(threshold)}): "
+            f"{ov_a['above_threshold']} → {ov_b['above_threshold']} "
+            f"({ov_b['above_threshold'] - ov_a['above_threshold']:+d}).")
+    if rep_count:
+        insights.append(
+            f"{rep_count} documento(s) repetido(s) nos dois ficheiros — se os "
+            "períodos não se sobrepõem, confirmar que não são pagamentos duplicados.")
+    insights.append(f"Veredicto: {label} — {message}")
+
+    return {
+        "file_a": name_a, "sheet_a": sheet_a,
+        "file_b": name_b, "sheet_b": sheet_b,
+        "threshold": threshold,
+        "overview": {"a": ov_a, "b": ov_b,
+                     "delta": {"rows": ov_b["rows"] - ov_a["rows"],
+                               "total": tot_delta,
+                               "total_pct": round(_pct(tot_delta, ov_a["total"]), 1)}},
+        "vendors": {"deltas": deltas, "top_increases": increases,
+                    "top_decreases": decreases, "new": new_vendors,
+                    "dropped": dropped},
+        "patterns": {"weekend": {"a": ov_a["weekend"], "b": ov_b["weekend"]},
+                     "duplicates": {"a": ov_a["duplicates"], "b": ov_b["duplicates"]},
+                     "above_threshold": {"a": ov_a["above_threshold"],
+                                         "b": ov_b["above_threshold"]}},
+        "repeated_ids": {"count": rep_count, "rows": rep_rows},
+        "verdict": label, "level": level, "message": message,
+        "insights": insights,
+    }
+
+
+def build_compare_report(content_a: bytes, name_a: str,
+                         content_b: bytes, name_b: str,
+                         sheet: str = None,
+                         threshold: float = 10000.0) -> tuple:
+    """Workbook da Análise Comparativa (Sumário + Variação por fornecedor +
+    Novos/Desaparecidos + Repetidos + Padrões). -> (bytes_xlsx, nome)."""
+    r = auto_compare(content_a, name_a, content_b, name_b,
+                     sheet=sheet, threshold=threshold)
+    ov, v, p = r["overview"], r["vendors"], r["patterns"]
+
+    main_df = pd.DataFrame(v["deltas"]).rename(columns={
+        "vendor": "Fornecedor", "a": "Total em A", "b": "Total em B",
+        "delta": "Diferença", "pct": "Variação %"})
+    main_df = main_df.sort_values("Diferença", key=lambda s: s.abs(),
+                                  ascending=False)
+
+    def _df(rows, cols):
+        return pd.DataFrame(rows) if rows else pd.DataFrame(
+            columns=cols)
+
+    novos_df = _df([{"Fornecedor": d["vendor"], "Total em B": d["b"],
+                     "% do total de B": round(100 * d["b"] / ov["b"]["total"], 1)
+                     if ov["b"]["total"] else 0.0} for d in v["new"]],
+                   ["Fornecedor", "Total em B", "% do total de B"])
+    fora_df = _df([{"Fornecedor": d["vendor"], "Total em A": d["a"]}
+                   for d in v["dropped"]], ["Fornecedor", "Total em A"])
+    rep_df = _df([{"Documento": x["id"], "Fornecedor em A": x["vendor_a"],
+                   "Fornecedor em B": x["vendor_b"], "Valor em A": x["amount_a"],
+                   "Valor em B": x["amount_b"], "Mesmo valor": "sim" if x["same_amount"] else "NÃO"}
+                  for x in r["repeated_ids"]["rows"]],
+                 ["Documento", "Fornecedor em A", "Fornecedor em B",
+                  "Valor em A", "Valor em B", "Mesmo valor"])
+    padroes_df = pd.DataFrame([
+        {"Padrão": "Fim-de-semana", "Em A": p["weekend"]["a"], "Em B": p["weekend"]["b"]},
+        {"Padrão": "Duplicados no próprio ficheiro", "Em A": p["duplicates"]["a"], "Em B": p["duplicates"]["b"]},
+        {"Padrão": "Acima da materialidade", "Em A": p["above_threshold"]["a"], "Em B": p["above_threshold"]["b"]},
+    ])
+
+    top_chart = pd.DataFrame({
+        "Fornecedor": main_df["Fornecedor"].head(10),
+        "Diferença": main_df["Diferença"].head(10)})
+
+    wb = es.build_premium_workbook(
+        title=f"Análise Comparativa — {name_a} → {r['file_b']}",
+        df=main_df,
+        kpis={
+            "Linhas em A": ov["a"]["rows"],
+            "Linhas em B": ov["b"]["rows"],
+            "Total em A": ov["a"]["total"],
+            "Total em B": ov["b"]["total"],
+            "Variação do total": f"{r['overview']['delta']['total_pct']:+.1f}%",
+            "Fornecedores novos": len(v["new"]),
+            "Sem movimentos em B": len(v["dropped"]),
+            "Documentos repetidos": r["repeated_ids"]["count"],
+            "Veredicto": r["verdict"],
+        },
+        charts=[{"type": "bar", "title": "Top 10 variações por fornecedor",
+                 "df": top_chart}],
+        extra_sheets=[
+            {"name": "Novos fornecedores", "df": novos_df},
+            {"name": "Sem movimentos em B", "df": fora_df},
+            {"name": "Documentos repetidos", "df": rep_df},
+            {"name": "Padrões", "df": padroes_df},
+        ],
+    )
+    stamp = datetime.utcnow().strftime("%Y%m%d_%H%M")
+    return wb, f"Comparacao_Auto_{stamp}.xlsx"
+
+
+# ---------------------------------------------------------------------------
 # Ficheiro de exemplo (problemas plantados para demonstração)
 # ---------------------------------------------------------------------------
 

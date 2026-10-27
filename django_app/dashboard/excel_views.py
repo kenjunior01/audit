@@ -313,6 +313,73 @@ def excel_auto_reconcile_report(request):
 @api_view(["POST"])
 @permission_classes([IsAuditorOrAdmin])
 @parser_classes([MultiPartParser])
+def excel_auto_compare(request):
+    """Análise Comparativa de 1 clique entre dois períodos (A = base, B = novo).
+    Body (multipart): file_a, file_b, sheet (opcional), threshold (opcional).
+    Devolve overview com deltas, movimentos por fornecedor, padrões,
+    documentos repetidos entre ficheiros, veredicto e insights."""
+    try:
+        files = _read_files(request, "file_a")
+        if not files:
+            return Response(
+                {"error": "Envie o 1º ficheiro no campo 'file_a' (período base)."},
+                status=400)
+        name_a, content_a = files[0]
+        files_b = _read_files(request, "file_b")
+        if not files_b:
+            return Response(
+                {"error": "Envie o 2º ficheiro no campo 'file_b' (período novo)."},
+                status=400)
+        name_b, content_b = files_b[0]
+        result = auto.auto_compare(
+            content_a, name_a, content_b, name_b,
+            sheet=request.data.get("sheet") or None,
+            threshold=float(request.data.get("threshold", 10000.0) or 10000.0))
+        return Response(result)
+    except ValueError as e:
+        return Response({"error": str(e)}, status=400)
+    except Exception as e:
+        logger.exception("excel_auto_compare failed")
+        return Response({"error": f"Erro na análise comparativa: {e}"}, status=500)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuditorOrAdmin])
+@parser_classes([MultiPartParser])
+def excel_auto_compare_report(request):
+    """Workbook premium da Análise Comparativa (Sumário + Variação por
+    fornecedor + Novos/Desaparecidos + Repetidos + Padrões)."""
+    try:
+        files = _read_files(request, "file_a")
+        if not files:
+            return Response(
+                {"error": "Envie o 1º ficheiro no campo 'file_a' (período base)."},
+                status=400)
+        name_a, content_a = files[0]
+        files_b = _read_files(request, "file_b")
+        if not files_b:
+            return Response(
+                {"error": "Envie o 2º ficheiro no campo 'file_b' (período novo)."},
+                status=400)
+        name_b, content_b = files_b[0]
+        wb_bytes, fname = auto.build_compare_report(
+            content_a, name_a, content_b, name_b,
+            sheet=request.data.get("sheet") or None,
+            threshold=float(request.data.get("threshold", 10000.0) or 10000.0))
+        return HttpResponse(
+            wb_bytes,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+    except ValueError as e:
+        return Response({"error": str(e)}, status=400)
+    except Exception as e:
+        logger.exception("excel_auto_compare_report failed")
+        return Response({"error": f"Erro ao gerar o relatório comparativo: {e}"}, status=500)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuditorOrAdmin])
+@parser_classes([MultiPartParser])
 def excel_auto_dossier(request):
     """Dossiê de Auditoria de 1 clique: analisa o ficheiro, importa as
     transações (clique explícito = este POST), gera o painel REA sobre a base
