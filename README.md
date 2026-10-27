@@ -50,7 +50,12 @@ passa a notificar quando o padrão voltar a aparecer nos dados importados.
 **Alertas ao vivo**: os alertas BI são avaliados automaticamente (celery beat
 com `AUDIT_ALERTS_ENABLED=true` ou `manage.py run_bi_alerts` em cron clássico)
 e a transição ok→violação dispara notificação na Central — sem depender de
-alguém clicar em "Avaliar".
+alguém clicar em "Avaliar". **Análise Comparativa**: compare o ficheiro com um
+período mais recente — variação de linhas/totais, maiores aumentos e reduções
+por fornecedor, fornecedores novos/desaparecidos, padrões (fim-de-semana,
+duplicados, materialidade) e **documentos repetidos entre os dois ficheiros**
+(sinal clássico de pagamento duplicado), com veredicto determinístico
+(estável/moderado/acentuado) e relatório Excel dedicado.
 
 ### Copiloto IA (NL → Excel)
 

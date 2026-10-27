@@ -15,7 +15,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import {
   Zap, Upload, Loader2, CheckCircle2, AlertTriangle, XCircle,
   FileDown, Sparkles, Database, GitBranch, ArrowRight, FileSpreadsheet,
-  GitCompareArrows, FileArchive, Bell, BellPlus, Check,
+  GitCompareArrows, FileArchive, Bell, BellPlus, Check, ArrowLeftRight,
 } from 'lucide-react'
 
 const MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -89,6 +89,21 @@ const LEVEL_STYLE: Record<string, string> = {
   high: 'border-red-700 bg-red-950/50 text-red-200',
 }
 
+type CmpVendor = { vendor: string; a: number; b: number; delta: number; pct: number }
+type CmpRep = { id: string; vendor_a: string; vendor_b: string
+  amount_a: number | null; amount_b: number | null; same_amount: boolean }
+type CompareResult = {
+  file_a: string; file_b: string
+  overview: { a: any; b: any; delta: { rows: number; total: number; total_pct: number } }
+  vendors: { deltas: CmpVendor[]; top_increases: CmpVendor[]; top_decreases: CmpVendor[]
+    new: CmpVendor[]; dropped: CmpVendor[] }
+  patterns: { weekend: { a: number; b: number }; duplicates: { a: number; b: number }
+    above_threshold: { a: number; b: number } }
+  repeated_ids: { count: number; rows: CmpRep[] }
+  verdict: string; level: string; message: string
+  insights: string[]
+}
+
 const fmt = (v: any) => new Intl.NumberFormat('pt-PT', { maximumFractionDigits: 2 }).format(Number(v) || 0)
 
 function CardHeader_({ title, icon }: { title: string; icon: React.ReactNode }) {
@@ -131,6 +146,10 @@ export default function AutoTab({ onAskCopilot, onGoImport }: {
   const [recLoading, setRecLoading] = useState(false)
   const [recError, setRecError] = useState('')
   const [recFileB, setRecFileB] = useState<File | null>(null)
+  const [cmp, setCmp] = useState<CompareResult | null>(null)
+  const [cmpLoading, setCmpLoading] = useState(false)
+  const [cmpError, setCmpError] = useState('')
+  const [cmpFileB, setCmpFileB] = useState<File | null>(null)
   const [dossLoading, setDossLoading] = useState(false)
   const [dossMsg, setDossMsg] = useState('')
   const [alertStates, setAlertStates] = useState<Record<string, string>>({})
@@ -138,10 +157,12 @@ export default function AutoTab({ onAskCopilot, onGoImport }: {
   const [alertErr, setAlertErr] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
   const recInputRef = useRef<HTMLInputElement>(null)
+  const cmpInputRef = useRef<HTMLInputElement>(null)
 
   const analyze = async (f: File) => {
     setLoading(true); setError(''); setResult(null); setRec(null)
     setImportMsg(''); setDossMsg(''); setRecFileB(null)
+    setCmp(null); setCmpFileB(null); setCmpError('')
     setAlertStates({}); setAlertErr('')
     try {
       const fd = new FormData(); fd.append('file', f)
@@ -217,14 +238,15 @@ export default function AutoTab({ onAskCopilot, onGoImport }: {
     } catch (e: any) { setError(e.message) } finally { setDossLoading(false) }
   }
 
-  const doReconcile = async (useDb: boolean) => {
+  const doReconcile = async (useDb: boolean, pickedFileB?: File) => {
     if (!file || !result || recLoading) return
-    if (!useDb && !recFileB) { setRecError('Escolha o 2º ficheiro para cruzar (ou use a base de dados).'); return }
+    const fileB = pickedFileB ?? recFileB
+    if (!useDb && !fileB) { setRecError('Escolha o 2º ficheiro para cruzar (ou use a base de dados).'); return }
     setRecLoading(true); setRecError('')
     try {
       const fd = new FormData(); fd.append('file_a', file)
       if (useDb) fd.append('use_db_b', '1')
-      else if (recFileB) fd.append('file_b', recFileB)
+      else if (fileB) fd.append('file_b', fileB)
       const r = await apiFetch('/excel/auto/reconcile', { method: 'POST', body: fd })
       const data = await r.json()
       if (!r.ok) throw new Error(data.error || `Erro ${r.status}`)
@@ -241,6 +263,28 @@ export default function AutoTab({ onAskCopilot, onGoImport }: {
       else fd.append('use_db_b', '1')
       await downloadPost('/excel/auto/reconcile/report', fd, 'Reconciliacao_Auto.xlsx')
     } catch (e: any) { setRecError(e.message) } finally { setRecLoading(false) }
+  }
+
+  const doCompare = async () => {
+    if (!file || cmpLoading) return
+    if (!cmpFileB) { setCmpError('Escolha o ficheiro do período novo para comparar.'); return }
+    setCmpLoading(true); setCmpError('')
+    try {
+      const fd = new FormData(); fd.append('file_a', file); fd.append('file_b', cmpFileB)
+      const r = await apiFetch('/excel/auto/compare', { method: 'POST', body: fd })
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.error || `Erro ${r.status}`)
+      setCmp(data)
+    } catch (e: any) { setCmpError(e.message) } finally { setCmpLoading(false) }
+  }
+
+  const doCmpReport = async () => {
+    if (!file || !cmpFileB || cmpLoading) return
+    setCmpLoading(true); setCmpError('')
+    try {
+      const fd = new FormData(); fd.append('file_a', file); fd.append('file_b', cmpFileB)
+      await downloadPost('/excel/auto/compare/report', fd, 'Comparacao_Auto.xlsx')
+    } catch (e: any) { setCmpError(e.message) } finally { setCmpLoading(false) }
   }
 
   const createAlert = async (s: AlertSuggestion) => {
@@ -304,7 +348,9 @@ export default function AutoTab({ onAskCopilot, onGoImport }: {
             Para <b className="text-slate-400">reconciliar</b>, analise primeiro o 1º ficheiro e depois use “Reconciliar” — ou largue 2 ficheiros de uma vez
           </p>
           <input ref={recInputRef} type="file" className="hidden" accept=".xlsx,.xlsm,.xls,.csv"
-            onChange={e => { const f = e.target.files?.[0]; if (f) { setRecFileB(f); doReconcile(false) } }} />
+            onChange={e => { const f = e.target.files?.[0]; if (f) { setRecFileB(f); doReconcile(false, f) } }} />
+          <input ref={cmpInputRef} type="file" className="hidden" accept=".xlsx,.xlsm,.xls,.csv"
+            onChange={e => { const f = e.target.files?.[0]; if (f) { setCmpFileB(f); setCmpError('') } }} />
         </CardContent>
       </Card>
 
@@ -569,6 +615,115 @@ export default function AutoTab({ onAskCopilot, onGoImport }: {
                   <button onClick={doRecReport} disabled={recLoading}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold disabled:opacity-50">
                     <FileDown className="w-3.5 h-3.5" /> Descarregar relatório de reconciliação
+                  </button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Análise Comparativa */}
+          <Card className="bg-slate-900 border-slate-800">
+            <CardHeader_ title="Comparar períodos — o que mudou?" icon={<ArrowLeftRight className="w-4 h-4 text-cyan-400" />} />
+            <CardContent className="pt-0 space-y-3">
+              <p className="text-xs text-slate-500">
+                Compare o ficheiro analisado (período base) com um ficheiro mais recente:
+                variação por fornecedor, fornecedores novos/desaparecidos, padrões e
+                documentos repetidos entre os dois ficheiros.
+              </p>
+              <div className="flex flex-wrap gap-2 items-center">
+                <button onClick={() => cmpInputRef.current?.click()} disabled={cmpLoading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold disabled:opacity-50">
+                  <Upload className="w-3.5 h-3.5" /> {cmpFileB ? `Período novo: ${cmpFileB.name}` : 'Escolher ficheiro do período novo'}
+                </button>
+                {cmpFileB && (
+                  <button onClick={doCompare} disabled={cmpLoading}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium disabled:opacity-50">
+                    {cmpLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowLeftRight className="w-3.5 h-3.5" />} Comparar
+                  </button>
+                )}
+              </div>
+              {cmpError && <p className="text-xs text-red-300">{cmpError}</p>}
+
+              {cmp && (
+                <div className="space-y-3">
+                  <div className={`rounded-lg border px-4 py-3 text-sm ${LEVEL_STYLE[cmp.level] || LEVEL_STYLE.warn}`}>
+                    <b>{cmp.verdict}</b> — {cmp.message}
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-center">
+                    {[['Linhas', `${cmp.overview.a.rows} → ${cmp.overview.b.rows}`],
+                      ['Total A', fmt(cmp.overview.a.total)], ['Total B', fmt(cmp.overview.b.total)],
+                      ['Variação', `${cmp.overview.delta.total_pct > 0 ? '+' : ''}${cmp.overview.delta.total_pct}%`],
+                      ['Docs repetidos', cmp.repeated_ids.count]].map(([l, v]) => (
+                      <div key={String(l)} className="rounded-lg bg-slate-800/60 p-2">
+                        <p className="text-[10px] text-slate-500">{l}</p>
+                        <p className="text-sm font-bold text-slate-200">{v}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {(cmp.vendors.top_increases.length > 0 || cmp.vendors.top_decreases.length > 0) && (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[11px]">
+                        <thead><tr className="text-slate-500 border-b border-slate-800">
+                          <th className="text-left py-1">Fornecedor</th>
+                          <th className="text-right py-1">Em A</th>
+                          <th className="text-right py-1">Em B</th>
+                          <th className="text-right py-1">Diferença</th>
+                          <th className="text-right py-1">Variação</th>
+                        </tr></thead>
+                        <tbody>
+                          {[...cmp.vendors.top_increases, ...cmp.vendors.top_decreases].slice(0, 6).map((d, i) => (
+                            <tr key={i} className="border-b border-slate-800/50 text-slate-300">
+                              <td className="py-1">{d.vendor}</td>
+                              <td className="py-1 text-right">{fmt(d.a)}</td>
+                              <td className="py-1 text-right">{fmt(d.b)}</td>
+                              <td className={`py-1 text-right font-semibold ${d.delta >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                {d.delta >= 0 ? '+' : ''}{fmt(d.delta)}
+                              </td>
+                              <td className={`py-1 text-right ${d.delta >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                {d.pct >= 0 ? '+' : ''}{d.pct}%
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  {(cmp.vendors.new.length > 0 || cmp.vendors.dropped.length > 0) && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {cmp.vendors.new.slice(0, 4).map(d => (
+                        <span key={d.vendor} className="px-2 py-0.5 rounded-full text-[10px] bg-cyan-950/60 text-cyan-300 border border-cyan-800">
+                          novo: {d.vendor} ({fmt(d.b)})
+                        </span>))}
+                      {cmp.vendors.dropped.slice(0, 4).map(d => (
+                        <span key={d.vendor} className="px-2 py-0.5 rounded-full text-[10px] bg-slate-800 text-slate-400 border border-slate-700">
+                          sem movimentos em B: {d.vendor}
+                        </span>))}
+                    </div>
+                  )}
+                  {cmp.repeated_ids.count > 0 && (
+                    <div className="rounded-lg border border-red-800 bg-red-950/40 px-3 py-2 text-xs text-red-200">
+                      <b>{cmp.repeated_ids.count} documento(s) repetido(s) nos dois ficheiros</b>
+                      {' '}— se os períodos não se sobrepõem, confirmar que não são pagamentos duplicados.
+                      <ul className="mt-1 space-y-0.5">
+                        {cmp.repeated_ids.rows.slice(0, 3).map(x => (
+                          <li key={x.id} className="font-mono">
+                            {x.id} · {x.vendor_a} · {fmt(x.amount_a)} → {fmt(x.amount_b)}
+                            {!x.same_amount && <span className="text-red-400"> (valor diferente)</span>}
+                          </li>))}
+                        {cmp.repeated_ids.rows.length > 3 && <li className="text-slate-500">+ {cmp.repeated_ids.rows.length - 3} no relatório</li>}
+                      </ul>
+                    </div>
+                  )}
+                  <div className="space-y-1">
+                    {cmp.insights.map((ins, i) => (
+                      <p key={i} className="text-xs text-slate-300 flex gap-2">
+                        <span className="text-cyan-500 mt-0.5 shrink-0">▸</span>{ins}
+                      </p>
+                    ))}
+                  </div>
+                  <button onClick={doCmpReport} disabled={cmpLoading}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold disabled:opacity-50">
+                    <FileDown className="w-3.5 h-3.5" /> Descarregar relatório comparativo
                   </button>
                 </div>
               )}

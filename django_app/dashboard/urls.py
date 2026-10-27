@@ -6,6 +6,7 @@ from .views import AlertViewSet, TransactionViewSet, export_alerts, export_trans
 from .excel_views import (excel_preview, excel_import, excel_analyze, excel_reconcile, excel_export,
                           excel_assistant, excel_assistant_apply, excel_auto, excel_auto_report,
                           excel_sample, excel_auto_reconcile, excel_auto_reconcile_report,
+                          excel_auto_compare, excel_auto_compare_report,
                           excel_auto_dossier)
 from .copilot_views import (copilot_chat, copilot_briefing, copilot_stream,
                             copilot_feedback, copilot_insights,
@@ -98,6 +99,8 @@ urlpatterns = [
     path('excel/auto/report', excel_auto_report, name='excel_auto_report'),
     path('excel/auto/reconcile', excel_auto_reconcile, name='excel_auto_reconcile'),
     path('excel/auto/reconcile/report', excel_auto_reconcile_report, name='excel_auto_reconcile_report'),
+    path('excel/auto/compare', excel_auto_compare, name='excel_auto_compare'),
+    path('excel/auto/compare/report', excel_auto_compare_report, name='excel_auto_compare_report'),
     path('excel/auto/dossier', excel_auto_dossier, name='excel_auto_dossier'),
     path('excel/sample', excel_sample, name='excel_sample'),
     path('excel/preview', excel_preview, name='excel_preview'),
