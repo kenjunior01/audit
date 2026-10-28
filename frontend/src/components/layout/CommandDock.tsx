@@ -28,34 +28,36 @@ import {
   FileSpreadsheet,
   Sparkles
 } from "lucide-react"
+import { useLang } from "@/lib/i18n"
 
 const menuItems = [
-  { path: "/", label: "Visão Geral", icon: LayoutDashboard },
-  { path: "/studio", label: "Painel Auto", icon: Sparkles },
-  { path: "/transactions", label: "Inspeção", icon: Search },
-  { path: "/alerts", label: "Riscos", icon: ShieldAlert },
-  { path: "/governance", label: "Governança AI", icon: ShieldCheck },
-  { path: "/cases", label: "Casos", icon: Briefcase },
-  { path: "/sla", label: "SLA", icon: Clock },
-  { path: "/assistant", label: "Audit AI", icon: Bot },
-  { path: "/agents", label: "Agentes", icon: Users },
-  { path: "/excel", label: "Excel Studio", icon: FileSpreadsheet },
-  { path: "/bi", label: "BI Studio", icon: BarChart3 },
+  { path: "/", k: "nav.overview", icon: LayoutDashboard },
+  { path: "/studio", k: "nav.studio", icon: Sparkles },
+  { path: "/transactions", k: "nav.inspect", icon: Search },
+  { path: "/alerts", k: "nav.risks", icon: ShieldAlert },
+  { path: "/governance", k: "nav.ai_gov", icon: ShieldCheck },
+  { path: "/cases", k: "nav.cases", icon: Briefcase },
+  { path: "/sla", k: "nav.sla", icon: Clock },
+  { path: "/assistant", k: "nav.assistant", icon: Bot },
+  { path: "/agents", k: "nav.agents", icon: Users },
+  { path: "/excel", k: "nav.excel", icon: FileSpreadsheet },
+  { path: "/bi", k: "nav.bi", icon: BarChart3 },
   { type: "divider" },
-  { path: "/graph", label: "Conexões", icon: Network },
-  { path: "/geo-risk", label: "Geo Risco", icon: Map },
-  { path: "/automation", label: "Automação", icon: Zap },
-  { path: "/context", label: "Contexto", icon: Database },
+  { path: "/graph", k: "nav.connections", icon: Network },
+  { path: "/geo-risk", k: "nav.geo", icon: Map },
+  { path: "/automation", k: "nav.automation", icon: Zap },
+  { path: "/context", k: "nav.context", icon: Database },
   { type: "divider" },
-  { path: "/integrations", label: "Integrações", icon: Link2 },
-  { path: "/external-actions", label: "Ações Externas", icon: Power },
-  { path: "/settings", label: "Configuração", icon: Settings },
+  { path: "/integrations", k: "nav.integrations", icon: Link2 },
+  { path: "/external-actions", k: "nav.actions", icon: Power },
+  { path: "/settings", k: "nav.settings", icon: Settings },
 ]
 
 export function CommandDock() {
   const pathname = usePathname()
   const [isExpanded, setIsExpanded] = useState(false)
   const [isHovered, setIsHovered] = useState(false)
+  const { t } = useLang()
 
   // Auto-collapse on route change
   useEffect(() => {
@@ -127,13 +129,13 @@ export function CommandDock() {
                     animate={{ opacity: isExpanded || isHovered ? 1 : 0, x: isExpanded || isHovered ? 0 : -10 }}
                     transition={{ duration: 0.2 }}
                   >
-                    {item.label}
+                    {t(item.k!)}
                   </motion.span>
 
                   {/* Hover Tooltip (Only when collapsed) */}
                   {!(isExpanded || isHovered) && (
                     <div className="absolute left-full ml-2 px-2 py-1 bg-slate-900 text-white text-xs rounded border border-slate-700 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
-                      {item.label}
+                      {t(item.k!)}
                     </div>
                   )}
                 </div>
@@ -153,7 +155,7 @@ export function CommandDock() {
                         className="ml-3 text-sm text-slate-400 whitespace-nowrap"
                         animate={{ opacity: isExpanded || isHovered ? 1 : 0, width: isExpanded || isHovered ? "auto" : 0 }}
                     >
-                        Configurações
+                        {t("nav.settings_footer")}
                     </motion.span>
                 </div>
             </Link>
@@ -171,7 +173,7 @@ export function CommandDock() {
                     className="ml-3 text-sm text-slate-400 group-hover:text-red-400 whitespace-nowrap"
                     animate={{ opacity: isExpanded || isHovered ? 1 : 0, width: isExpanded || isHovered ? "auto" : 0 }}
                 >
-                    Sair
+                    {t("nav.logout")}
                 </motion.span>
             </button>
         </div>

@@ -1,6 +1,7 @@
 from celery import shared_task
 from django.core.mail import send_mail
 from django.utils import timezone
+from datetime import timedelta
 from .models import ImmutableAuditLog, WebhookEvent, ExternalSystem
 import requests
 import json
@@ -260,3 +261,121 @@ def run_bi_alerts():
             "results": results,
             "message": f"{len(results)} alerta(s) avaliado(s), "
                        f"{breaches} em violação"}
+
+
+# ---------------------------------------------------------------------------
+# Digest semanal de alertas BI (email + Central de Notificações + resumo LLM)
+# ---------------------------------------------------------------------------
+
+@shared_task
+def send_alert_digest(days=7, send_email=True):
+    """Digest semanal dos alertas BI (MeasureAlert): avalia tudo em fresco
+    (run_bi_alerts), resume o estado (violências, erros, regras novas,
+    top ofensores por contagem de violações) e entrega por dois canais:
+    1) Central de Notificações (in-app) para admin/auditor — sempre;
+    2) Email para AUDIT_DIGEST_EMAILS — best-effort, apenas se configurado.
+    Quando um LLM está disponível (llm_client — EXAONE/Ollama/OpenAI-
+    compatible), gera um resumo executivo em PT; caso contrário usa texto
+    determinístico. Nunca derruba o fluxo: qualquer falha é logada.
+    Invocável por celery beat (AUDIT_ALERT_DIGEST_ENABLED=true), por cron
+    clássico (`manage.py send_alert_digest`) ou diretamente em testes."""
+    from django.conf import settings as dj_settings
+    from .models import MeasureAlert
+    from .notifications_service import notify_role
+
+    try:
+        run_bi_alerts()  # avaliação fresca — estado consistente
+    except Exception as e:  # pragma: no cover — digest segue com o último estado
+        logger.warning("digest: avaliação prévia falhou (%s)", e)
+
+    since = timezone.now() - timedelta(days=days)
+    alerts = list(MeasureAlert.objects.all())
+    stats = {
+        "total": len(alerts),
+        "ativos": sum(1 for a in alerts if a.active),
+        "em_violacao": sum(1 for a in alerts if a.last_state == "breach"),
+        "erro": sum(1 for a in alerts if a.last_state == "error"),
+        "novos": sum(1 for a in alerts if a.created_at and a.created_at >= since),
+        "periodo_dias": days,
+    }
+    top = sorted(alerts, key=lambda a: a.breach_count, reverse=True)
+    top = [a for a in top if a.breach_count > 0][:10]
+
+    linhas = []
+    for a in top:
+        estado = {"breach": "EM VIOLAÇÃO", "error": "erro",
+                  "ok": "ok"}.get(a.last_state, a.last_state or "—")
+        valor = f"{a.last_value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") \
+            if a.last_value is not None else "—"
+        linhas.append(f"• {a.name} — {estado} | valor atual: {valor} | "
+                      f"{a.breach_count} violação(ões) acumulada(s)")
+
+    base = (f"Alertas BI — resumo dos últimos {days} dias:\n"
+            f"• {stats['total']} regra(s), {stats['ativos']} ativa(s)\n"
+            f"• {stats['em_violacao']} em violação, {stats['erro']} com erro\n"
+            f"• {stats['novos']} regra(s) nova(s) no período")
+    if linhas:
+        base += "\nTop ofensores:\n" + "\n".join(linhas)
+    if stats["total"] == 0:
+        base += "\nSem regras de alerta definidas — crie-as no BI Studio."
+
+    llm_used = False
+    try:
+        from . import llm_client
+        if llm_client.is_available():
+            prompt = (
+                "Escreve um resumo executivo de 2 frases, em português de "
+                f"Portugal, para o digest semanal de alertas de auditoria. "
+                f"Dados: {json.dumps(stats, ensure_ascii=False)}. "
+                "Sê direto e factual, sem saudação nem despedida.")
+            resumo = (llm_client.generate(prompt, timeout=20, max_tokens=220)
+                      or "").strip()
+            if resumo:
+                base = f"Resumo (IA):\n{resumo}\n\n" + base
+                llm_used = True
+    except Exception as e:  # LLM é opcional — nunca derruba o digest
+        logger.warning("digest: resumo LLM falhou (%s)", e)
+
+    dia = timezone.localdate().strftime("%d/%m/%Y")
+    titulo = f"Digest semanal de alertas — {dia}"
+
+    notificados = notify_role(
+        roles=("admin", "auditor"), kind="bi.digest", title=titulo,
+        body=base, route="/bi", severity=("critical" if stats["em_violacao"]
+                                          else ("warn" if stats["erro"] else "info")),
+        meta={"stats": stats, "llm": llm_used}, dedupe_minutes=0)
+    notificados = len(notificados) if isinstance(notificados, list) else (1 if notificados else 0)
+
+    recipients = list(getattr(dj_settings, "AUDIT_DIGEST_EMAILS", []) or [])
+    status = "stored"
+    if send_email and recipients:
+        try:
+            send_mail(
+                subject=f"[Audit] {titulo}",
+                message=base,
+                from_email=dj_settings.DEFAULT_FROM_EMAIL,
+                recipient_list=recipients,
+                fail_silently=False)
+            status = "sent"
+        except Exception as e:
+            logger.warning("digest alertas email falhou: %s", e)
+            status = "failed"
+
+    try:
+        ImmutableAuditLog.objects.create(
+            actor_id="System_Alert_Digest",
+            action_type=f"ALERT_DIGEST_{status.upper()}",
+            resource_id=f"week-{timezone.localdate().isoformat()}",
+            details={"stats": stats, "llm": llm_used,
+                     "notificados_in_app": notificados,
+                     "recipients": recipients if status == "sent" else []})
+    except Exception as e:  # pragma: no cover
+        logger.warning("digest alertas audit log falhou: %s", e)
+
+    verb = {"sent": "email enviado", "stored": "armazenado (sem email — "
+            "configure AUDIT_DIGEST_EMAILS)", "failed": "email falhou"}[status]
+    return {"ok": status != "failed", "status": status, "stats": stats,
+            "llm": llm_used, "message":
+            f"Digest de alertas: {stats['em_violacao']} em violação, "
+            f"{stats['erro']} com erro, {stats['novos']} novo(s) — "
+            f"{notificados} notificação(ões) in-app, {verb}"}

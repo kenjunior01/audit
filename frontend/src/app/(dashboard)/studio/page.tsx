@@ -19,6 +19,7 @@ import {
 import { MiniVisual } from '@/components/bi/mini-visual'
 import { apiFetch } from '@/lib/api'
 import { useRequireToken } from '@/lib/auth'
+import { useLang } from '@/lib/i18n'
 
 const COLORS = ['#2563eb', '#7c3aed', '#0891b2', '#ea580c', '#16a34a',
   '#dc2626', '#d97706', '#4f46e5', '#0d9488', '#be185d']
@@ -54,10 +55,10 @@ const chipOn = `${chip} bg-blue-600 border-blue-600 text-white`
 const chipOff = `${chip} border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800`
 
 const PERIODS = [
-  { key: 'all', label: 'Tudo' },
-  { key: 'year', label: 'Este ano' },
-  { key: '90', label: '90 dias' },
-  { key: '30', label: '30 dias' },
+  { key: 'all', k: 'period.all' },
+  { key: 'year', k: 'period.year' },
+  { key: '90', k: 'period.90' },
+  { key: '30', k: 'period.30' },
 ]
 
 const QA_EXAMPLES = [
@@ -67,20 +68,20 @@ const QA_EXAMPLES = [
 
 const CMP_PT: Record<string, string> = { gt: '>', lt: '<', gte: '≥', lte: '≤' }
 
-const ago = (iso: string | null) => {
+const ago = (iso: string | null, lang: string = 'pt') => {
   if (!iso) return '—'
   const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000)
-  if (mins < 1) return 'agora'
-  if (mins < 60) return `há ${mins} min`
+  if (mins < 1) return lang === 'en' ? 'now' : 'agora'
+  if (mins < 60) return lang === 'en' ? `${mins} min ago` : `há ${mins} min`
   const h = Math.round(mins / 60)
-  if (h < 24) return `há ${h} h`
-  return `há ${Math.round(h / 24)} d`
+  if (h < 24) return lang === 'en' ? `${h} h ago` : `há ${h} h`
+  return lang === 'en' ? `${Math.round(h / 24)} d ago` : `há ${Math.round(h / 24)} d`
 }
 
-const ruleLabel = (a: AlertRow) => {
+const ruleLabel = (a: AlertRow, t: (k: string) => string = (k) => k) => {
   const m = a.measure?.op === 'calc' ? (a.measure.measure || {}) : (a.measure || {})
-  const agg = m.agg === 'count' ? 'contagem' : m.agg === 'sum' ? 'soma' : (m.agg || 'medida')
-  const fld = !m.field || m.field === 'id' ? '' : ` de ${m.field}`
+  const agg = m.agg === 'count' ? t('agg.count') : m.agg === 'sum' ? t('agg.sum') : (m.agg || t('agg.measure'))
+  const fld = !m.field || m.field === 'id' ? '' : ` ${t('agg.of')} ${m.field}`
   return `${agg}${fld} ${CMP_PT[a.comparator] || a.comparator} ${fmt(a.threshold)}`
 }
 
@@ -88,12 +89,13 @@ const stDot = (a: AlertRow) =>
   !a.active ? 'bg-slate-300' : a.last_state === 'breach' ? 'bg-red-500'
     : a.last_state === 'error' ? 'bg-amber-500' : a.last_state === 'ok' ? 'bg-emerald-500' : 'bg-slate-300'
 
-const stLabel = (a: AlertRow) =>
-  !a.active ? 'inativo' : a.last_state === 'breach' ? 'em violação'
-    : a.last_state === 'error' ? 'erro' : a.last_state === 'ok' ? 'OK' : 'sem avaliação'
+const stLabel = (a: AlertRow, t: (k: string) => string = (k) => k) =>
+  !a.active ? t('st.inactive') : a.last_state === 'breach' ? t('st.breach')
+    : a.last_state === 'error' ? t('st.error') : a.last_state === 'ok' ? t('st.ok') : t('st.none')
 
 export default function StudioPage() {
   useRequireToken()
+  const { lang, t } = useLang()
   const [period, setPeriod] = useState('all')
   const [vendorSel, setVendorSel] = useState('')
   const [data, setData] = useState<AutoPayload | null>(null)
@@ -111,6 +113,7 @@ export default function StudioPage() {
   const [runBusy, setRunBusy] = useState(false)
   const [alertsErr, setAlertsErr] = useState('')
   const [runMsg, setRunMsg] = useState('')
+  const [runBad, setRunBad] = useState(false)
 
   const filters = useMemo(() => {
     const f: Row[] = []
@@ -135,7 +138,7 @@ export default function StudioPage() {
       const d = await r.json()
       if (!r.ok) { setErr(d.error || `erro ${r.status}`); return }
       setData(d)
-    } catch { setErr('falha ao gerar o painel') } finally { setBusy(false) }
+    } catch { setErr(t('err.generate')) } finally { setBusy(false) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(filters)])
 
@@ -155,7 +158,7 @@ export default function StudioPage() {
     try {
       const r = await apiFetch('/bi/export/xlsx', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind, data: vis, title, subtitle: 'Painel Auto' }),
+        body: JSON.stringify({ kind, data: vis, title, subtitle: t('studio.title') }),
       })
       if (!r.ok) { const d = await r.json(); setErr(d.error || `erro ${r.status}`); return }
       const blob = await r.blob()
@@ -163,7 +166,7 @@ export default function StudioPage() {
       const a = document.createElement('a')
       a.href = url; a.download = `painel-${kind}-${new Date().toISOString().slice(0, 10)}.xlsx`
       a.click(); URL.revokeObjectURL(url)
-    } catch { setErr('falha na exportação') }
+    } catch { setErr(t('err.export')) }
   }
 
   const barV = data?.visuals?.bar
@@ -184,7 +187,7 @@ export default function StudioPage() {
     return (seriesV?.data.rows || []).map((r: Row) => ({ ...r, mv: r.moving_avg }))
   }, [forecastV, anomalyV, seriesV])
 
-  const crowName = forecastV ? 'Projeção 3 meses' : anomalyV ? 'Anomalias mensais' : 'Evolução mensal'
+  const crowName = forecastV ? t('studio.forecast') : anomalyV ? t('studio.anomalies') : t('studio.evolution')
 
   function clickSlicer(value: string) {
     if (!value) return
@@ -203,7 +206,7 @@ export default function StudioPage() {
       const d = await r.json()
       if (!r.ok) { setQaErr(d.error || `erro ${r.status}`); return }
       setQaRes(d); setQaText('')
-    } catch { setQaErr('sem ligação ao Q&A') } finally { setQaBusy(false) }
+    } catch { setQaErr(t('err.qa')) } finally { setQaBusy(false) }
   }
 
   const loadAlerts = useCallback(async () => {
@@ -222,9 +225,10 @@ export default function StudioPage() {
       const d = await r.json()
       if (!r.ok) { setAlertsErr(d.error || `erro ${r.status}`); return }
       const nb = (d.results || []).filter((x: Row) => x.state === 'breach').length
-      setRunMsg(nb ? `${d.evaluated} avaliado(s) — ${nb} em violação` : `${d.evaluated} avaliado(s) — tudo dentro dos limiares`)
+      setRunBad(nb > 0)
+      setRunMsg(nb ? `${d.evaluated} ${t('studio.evaluated')} — ${nb} ${t('studio.in_breach')}` : `${d.evaluated} ${t('studio.evaluated')} — ${t('studio.all_within')}`)
       await loadAlerts()
-    } catch { setAlertsErr('falha ao avaliar os alertas') } finally { setRunBusy(false) }
+    } catch { setAlertsErr(t('err.evaluate')) } finally { setRunBusy(false) }
   }
 
   const alertsSorted = useMemo(() => {
@@ -239,34 +243,34 @@ export default function StudioPage() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
-            <Sparkles className="w-6 h-6 text-blue-600" /> Painel Auto
+            <Sparkles className="w-6 h-6 text-blue-600" /> {t('studio.title')}
           </h1>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            Um clique: o motor REA analisa os seus dados e monta o painel completo — KPIs, tendências, Pareto, anomalias e projeção.
+            {t('studio.subtitle')}
           </p>
         </div>
         <div className="flex gap-2 flex-wrap items-center">
           {nBreach > 0 && (
             <a href="#alertas-auto" className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 flex items-center gap-1.5">
-              <BellRing className="w-3.5 h-3.5" /> {nBreach} em violação
+              <BellRing className="w-3.5 h-3.5" /> {nBreach} {t('studio.in_breach')}
             </a>
           )}
           <button className={btnP} onClick={() => generate()} disabled={busy}>
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-            Gerar painel
+            {t('studio.generate')}
           </button>
           {data && !data.empty && (
             <>
               <button className={btnS} onClick={() => barV && exportXlsx('group', barV.data, `Volume por ${d1}`)}>
-                <Download className="w-3.5 h-3.5" /> Volume (.xlsx)
+                <Download className="w-3.5 h-3.5" /> {t('studio.vol_xlsx')}
               </button>
-              <button className={btnS} onClick={() => seriesV && exportXlsx('series', seriesV.data, 'Evolução mensal')}>
-                <Download className="w-3.5 h-3.5" /> Série (.xlsx)
+              <button className={btnS} onClick={() => seriesV && exportXlsx('series', seriesV.data, t('studio.evolution'))}>
+                <Download className="w-3.5 h-3.5" /> {t('studio.series_xlsx')}
               </button>
             </>
           )}
           <a className={btnS} href="/bi">
-            <BarChart3 className="w-3.5 h-3.5" /> Modo avançado
+            <BarChart3 className="w-3.5 h-3.5" /> {t('studio.advanced')}
           </a>
         </div>
       </div>
@@ -276,7 +280,7 @@ export default function StudioPage() {
         <Filter className="w-3.5 h-3.5 text-slate-400" />
         {PERIODS.map(p => (
           <button key={p.key} className={period === p.key ? chipOn : chipOff}
-                  onClick={() => setPeriod(p.key)}>{p.label}</button>
+                  onClick={() => setPeriod(p.key)}>{t(p.k)}</button>
         ))}
         {vendorSel && (
           <span className={chipOn}>
@@ -288,7 +292,7 @@ export default function StudioPage() {
         )}
         {data?.meta?.records ? (
           <span className="text-[11px] text-slate-400 ml-auto">
-            {data.meta.records} transações {data.meta.period?.start ? `· ${data.meta.period.start} → ${data.meta.period.end}` : ''}
+            {data.meta.records} {t('studio.records')} {data.meta.period?.start ? `· ${data.meta.period.start} → ${data.meta.period.end}` : ''}
           </span>
         ) : null}
       </div>
@@ -297,19 +301,19 @@ export default function StudioPage() {
       <div className={card}>
         <div className="flex items-center gap-2 mb-2">
           <MessageCircleQuestion className="w-4 h-4 text-amber-500" />
-          <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">Pergunte aos dados</p>
-          <span className="text-[11px] text-slate-400">em linguagem natural — resposta com gráfico</span>
+          <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">{t('studio.ask_title')}</p>
+          <span className="text-[11px] text-slate-400">{t('studio.ask_sub')}</span>
         </div>
         <div className="flex gap-2">
           <input
             value={qaText}
             onChange={e => setQaText(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') askQ() }}
-            placeholder="ex.: gastos por fornecedor no último ano"
+            placeholder={t('studio.ask_ph')}
             className="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
           <button className={btnP} onClick={() => askQ()} disabled={qaBusy || !qaText.trim()}>
-            {qaBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} Perguntar
+            {qaBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} {t('studio.ask_btn')}
           </button>
         </div>
         <div className="flex flex-wrap gap-1.5 mt-2">
@@ -323,7 +327,7 @@ export default function StudioPage() {
           <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800">
             <div className="flex items-center gap-2 flex-wrap mb-1">
               <span className="px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-[11px]">{qaRes.spec?.visual}</span>
-              <span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-[11px]">confiança {(100 * (qaRes.spec?.confidence || 0)).toFixed(0)}%</span>
+              <span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-[11px]">{t('studio.conf')} {(100 * (qaRes.spec?.confidence || 0)).toFixed(0)}%</span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">{qaRes.explain}</p>
             <MiniVisual kind={qaRes.kind} data={qaRes.data} />
@@ -334,7 +338,7 @@ export default function StudioPage() {
       {err && <p className="text-sm text-red-500">{err}</p>}
       {busy && !data && (
         <div className={`${card} flex items-center gap-2 text-sm text-slate-500`}>
-          <Loader2 className="w-4 h-4 animate-spin" /> A analisar os seus dados…
+          <Loader2 className="w-4 h-4 animate-spin" /> {t('studio.loading')}
         </div>
       )}
 
@@ -346,7 +350,7 @@ export default function StudioPage() {
             {data.insights[0]}
           </p>
           <a className={btnP} href="/excel">
-            <FileSpreadsheet className="w-3.5 h-3.5" /> Importar Excel agora
+            <FileSpreadsheet className="w-3.5 h-3.5" /> {t('studio.import_cta')}
           </a>
         </div>
       )}
@@ -370,7 +374,7 @@ export default function StudioPage() {
       {data && !data.empty && data.insights.length > 0 && (
         <div className={`${card} border-l-4 !border-l-amber-400`}>
           <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1.5 mb-2">
-            <Lightbulb className="w-3.5 h-3.5 text-amber-500" /> O que os dados dizem
+            <Lightbulb className="w-3.5 h-3.5 text-amber-500" /> {t('studio.insights_title')}
           </p>
           <ul className="space-y-1.5">
             {data.insights.map((s: string, i: number) => (
@@ -387,37 +391,37 @@ export default function StudioPage() {
         <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
           <div className="flex items-center gap-2">
             <BellRing className="w-4 h-4 text-blue-600" />
-            <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">Alertas ao vivo</p>
-            <span className="text-[11px] text-slate-400">regras avaliadas automaticamente hora a hora</span>
+            <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">{t('studio.alerts_title')}</p>
+            <span className="text-[11px] text-slate-400">{t('studio.alerts_sub')}</span>
           </div>
           <button className={btnS} onClick={runAlerts} disabled={runBusy}>
-            {runBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Avaliar agora
+            {runBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} {t('studio.evaluate')}
           </button>
         </div>
-        {runMsg && <p className={`text-xs mb-2 ${runMsg.includes('violação') ? 'text-red-500' : 'text-emerald-600'}`}>{runMsg}</p>}
+        {runMsg && <p className={`text-xs mb-2 ${runBad ? 'text-red-500' : 'text-emerald-600'}`}>{runMsg}</p>}
         {alertsErr && <p className="text-xs text-red-500 mb-2">{alertsErr}</p>}
         {alertsSorted.length === 0 ? (
           <p className="text-xs text-slate-400">
-            Sem regras de monitorização ainda — crie sugestões com 1 clique na{' '}
-            <a href="/excel" className="text-blue-600 hover:underline">Análise Auto do Excel Studio</a> ou no{' '}
+            {t('studio.no_rules')}{' '}
+            <a href="/excel" className="text-blue-600 hover:underline">{t('studio.excel_auto_link')}</a> {t('studio.or_bi')}{' '}
             <a href="/bi" className="text-blue-600 hover:underline">BI Studio</a>.
           </p>
         ) : (
           <div className="space-y-1.5">
             {alertsSorted.map(a => (
               <div key={a.id} className="flex items-center gap-2.5 flex-wrap text-xs py-1 border-b border-slate-100 dark:border-slate-800 last:border-0">
-                <span className={`w-2 h-2 rounded-full shrink-0 ${stDot(a)}`} title={stLabel(a)} />
+                <span className={`w-2 h-2 rounded-full shrink-0 ${stDot(a)}`} title={stLabel(a, t)} />
                 <span className="font-medium text-gray-700 dark:text-slate-200">{a.name}</span>
-                <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[10px] text-slate-500 dark:text-slate-400">{ruleLabel(a)}</span>
+                <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[10px] text-slate-500 dark:text-slate-400">{ruleLabel(a, t)}</span>
                 {a.last_value != null && (
-                  <span className="text-slate-500 dark:text-slate-400">valor atual: <b className={a.last_state === 'breach' ? 'text-red-500' : ''}>{fmt(a.last_value)}</b></span>
+                  <span className="text-slate-500 dark:text-slate-400">{t('studio.current_value')} <b className={a.last_state === 'breach' ? 'text-red-500' : ''}>{fmt(a.last_value)}</b></span>
                 )}
-                {a.breach_count > 0 && <span className="text-red-500">×{a.breach_count} violação(ões)</span>}
-                <span className="text-slate-400 ml-auto">{stLabel(a)} · {ago(a.last_checked_at)}</span>
+                {a.breach_count > 0 && <span className="text-red-500">×{a.breach_count} {t('studio.breaches')}</span>}
+                <span className="text-slate-400 ml-auto">{stLabel(a, t)} · {ago(a.last_checked_at, lang)}</span>
               </div>
             ))}
             <a href="/bi" className="text-[11px] text-blue-600 hover:underline inline-flex items-center gap-1">
-              Gerir alertas no BI Studio
+              {t('studio.manage_alerts')}
             </a>
           </div>
         )}
