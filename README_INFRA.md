@@ -54,6 +54,24 @@ núcleo (postgres + redis + API Django + dashboard Next.js), `worker`
     - Set `REDIS_URL=redis://localhost:6379/0`
     - Para email real: `AUDIT_EMAIL_BACKEND=…smtp.EmailBackend` + `EMAIL_HOST`…
 
+### Linux Docker bridge workaround
+
+The standard Compose setup above is the portable default. On Linux hosts where
+containers cannot communicate over their Docker bridge, an optional override
+uses host networking for the application services while PostgreSQL and Redis
+remain isolated and published only on localhost:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.host-network.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.host-network.yml --profile ai up -d
+docker compose -f docker-compose.yml -f docker-compose.host-network.yml --profile worker up -d
+```
+
+This override is Linux-specific; do not use it with Docker Desktop on macOS or
+Windows. llama.cpp and Qdrant bind to localhost in this mode. The normal
+bridge-network commands remain recommended on hosts where container networking
+works.
+
 > Documentação geral da plataforma: [README.md](README.md).
 
 ## Public APIs without API keys
@@ -66,9 +84,9 @@ limits and terms remain provider-controlled:
 |---|---|
 | `GET /django/api/integrations/public` | Provider directory and official legal-source links |
 | `GET /django/api/integrations/public/currencies?base=EUR&symbols=USD,BRL` | Frankfurter / ECB exchange rates |
-| `GET /django/api/integrations/public/countries?q=Portugal` | REST Countries |
+| `GET /django/api/integrations/public/countries?q=Portugal` | REST Countries (CountriesNow fallback) |
 | `GET /django/api/integrations/public/weather?location=Lisbon` | Open-Meteo geocoding and forecast |
-| `GET /django/api/integrations/public/news?q=company` | GDELT public news search |
+| `GET /django/api/integrations/public/news?q=company` | GDELT (Google News RSS fallback) |
 | `GET /django/api/integrations/public/companies/br?cnpj=...` | BrasilAPI CNPJ lookup |
 
 These endpoints require an authenticated viewer token. None of the providers

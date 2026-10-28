@@ -1,0 +1,71 @@
+# Optional workaround for Linux hosts where Docker bridge networking is blocked.
+# Keep docker-compose.yml as the portable default; do not use this on Docker Desktop.
+services:
+  backend:
+    network_mode: host
+    ports: !reset []
+    environment:
+      AUDIT_DATABASE_URL: postgres://${POSTGRES_USER:-audit}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@127.0.0.1:5432/${POSTGRES_DB:-audit}
+      CELERY_BROKER_URL: redis://127.0.0.1:6379/0
+      CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/0
+      OLLAMA_URL: http://127.0.0.1:11434
+      QDRANT_URL: http://127.0.0.1:6333
+      AUDIT_LLM_BASE_URL: http://127.0.0.1:8080/v1
+      GUNICORN_BIND: 127.0.0.1:8000
+
+  frontend:
+    network_mode: host
+    ports: !reset []
+    build:
+      args:
+        NEXT_PUBLIC_API_BASE: http://127.0.0.1:8000
+    environment:
+      NEXT_PUBLIC_API_BASE: http://127.0.0.1:8000
+      HOSTNAME: 127.0.0.1
+
+  celery-worker:
+    network_mode: host
+    ports: !reset []
+    environment:
+      AUDIT_DATABASE_URL: postgres://${POSTGRES_USER:-audit}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@127.0.0.1:5432/${POSTGRES_DB:-audit}
+      CELERY_BROKER_URL: redis://127.0.0.1:6379/0
+      CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/0
+      OLLAMA_URL: http://127.0.0.1:11434
+      QDRANT_URL: http://127.0.0.1:6333
+      AUDIT_LLM_BASE_URL: http://127.0.0.1:8080/v1
+
+  celery-beat:
+    network_mode: host
+    ports: !reset []
+    environment:
+      AUDIT_DATABASE_URL: postgres://${POSTGRES_USER:-audit}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@127.0.0.1:5432/${POSTGRES_DB:-audit}
+      CELERY_BROKER_URL: redis://127.0.0.1:6379/0
+      CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/0
+
+  exaone:
+    network_mode: host
+    ports: !reset []
+    command:
+      - "-hf"
+      - "LGAI-EXAONE/EXAONE-4.0-1.2B-GGUF:Q4_K_M"
+      - "--host"
+      - "127.0.0.1"
+      - "--port"
+      - "8080"
+      - "--alias"
+      - "exaone4.0-1.2b"
+      - "-c"
+      - "8192"
+      - "--jinja"
+
+  ollama:
+    network_mode: host
+    ports: !reset []
+    environment:
+      OLLAMA_HOST: 127.0.0.1:11434
+
+  qdrant:
+    network_mode: host
+    ports: !reset []
+    environment:
+      QDRANT__SERVICE__HOST: 127.0.0.1

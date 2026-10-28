@@ -1,5 +1,7 @@
+from email.utils import parsedate_to_datetime
 import re
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
+from xml.etree import ElementTree
 
 import requests
 from rest_framework import status
@@ -24,7 +26,15 @@ PUBLIC_SERVICES = [
         "name": "REST Countries",
         "url": "https://restcountries.com/",
         "requires_key": False,
-        "description": "Dados públicos de países, regiões e moedas.",
+        "description": "Dados de países; usa CountriesNow como alternativa se necessário.",
+    },
+    {
+        "id": "countriesnow",
+        "category": "geography",
+        "name": "CountriesNow",
+        "url": "https://countriesnow.space/",
+        "requires_key": False,
+        "description": "Fonte alternativa de países sem chave para maior disponibilidade.",
     },
     {
         "id": "open-meteo",
@@ -40,7 +50,15 @@ PUBLIC_SERVICES = [
         "name": "GDELT DOC",
         "url": "https://www.gdeltproject.org/",
         "requires_key": False,
-        "description": "Pesquisa de notícias e eventos públicos.",
+        "description": "Pesquisa de notícias; Google News RSS é usado como alternativa.",
+    },
+    {
+        "id": "google-news-rss",
+        "category": "news_risk",
+        "name": "Google News RSS",
+        "url": "https://news.google.com/",
+        "requires_key": False,
+        "description": "Fonte alternativa de notícias públicas sem chave.",
     },
     {
         "id": "brasilapi-cnpj",
@@ -94,19 +112,56 @@ def _get_json(url, *, params=None):
 
 
 def search_news_articles(query):
-    data = _get_json(
-        "https://api.gdeltproject.org/api/v2/doc/doc",
-        params={
-            "query": query,
-            "mode": "ArtList",
-            "format": "json",
-            "maxrecords": 10,
-            "sort": "DateDesc",
-        },
-    )
-    if not isinstance(data, dict):
-        raise PublicProviderError("Unexpected news provider response")
-    return data.get("articles", [])
+    try:
+        data = _get_json(
+            "https://api.gdeltproject.org/api/v2/doc/doc",
+            params={
+                "query": query,
+                "mode": "ArtList",
+                "format": "json",
+                "maxrecords": 10,
+                "sort": "DateDesc",
+            },
+        )
+        if isinstance(data, dict) and isinstance(data.get("articles"), list):
+            return data["articles"]
+    except PublicProviderError:
+        pass
+
+    try:
+        response = requests.get(
+            "https://news.google.com/rss/search",
+            params={"q": query, "hl": "pt-PT", "gl": "PT", "ceid": "PT:pt-150"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        root = ElementTree.fromstring(response.content)
+    except (requests.RequestException, ElementTree.ParseError, ValueError) as exc:
+        raise PublicProviderError from exc
+
+    articles = []
+    for item in root.findall("./channel/item")[:10]:
+        title = item.findtext("title")
+        url = item.findtext("link")
+        if not title or not url:
+            continue
+        published = item.findtext("pubDate") or ""
+        try:
+            parsed_date = parsedate_to_datetime(published)
+            if parsed_date:
+                published = parsed_date.isoformat()
+        except (TypeError, ValueError, OverflowError):
+            pass
+        source = item.find("source")
+        source_url = source.get("url", "") if source is not None else ""
+        articles.append({
+            "title": title,
+            "url": url,
+            "seendate": published,
+            "domain": urlsplit(source_url).hostname or "",
+            "description": item.findtext("description") or "",
+        })
+    return articles
 
 
 def _provider_error(provider):
@@ -124,11 +179,13 @@ def public_services(request):
         "regulatory_sources": REGULATORY_SOURCES,
         "notice": (
             "Providers are independent public services; availability, rate limits, "
-            "coverage and terms are controlled by each provider."
+            "coverage and terms are controlled by each provider. Country and news "
+            "lookups use a second no-key source when their primary provider fails."
         ),
         "privacy_notice": (
             "Search terms and lookup identifiers are sent to the selected external "
-            "provider. Do not send confidential or personal information."
+            "provider and, if it is unavailable, its listed fallback. Do not send "
+            "confidential or personal information."
         ),
     })
 
@@ -167,11 +224,46 @@ def public_country_lookup(request):
             f"https://restcountries.com/v3.1/name/{quote(query, safe='')}",
             params={"fields": "name,cca2,region,subregion,capital,currencies,latlng"},
         )
+        if isinstance(data, list):
+            return Response({"countries": data})
     except PublicProviderError:
-        return _provider_error("rest-countries")
-    if not isinstance(data, list):
-        return _provider_error("rest-countries")
-    return Response({"countries": data})
+        pass
+
+    try:
+        fallback_data = _get_json(
+            "https://countriesnow.space/api/v0.1/countries/info",
+            params={"returns": "name,iso2,iso3,capital,currency"},
+        )
+    except PublicProviderError:
+        return _provider_error("countriesnow")
+    if (
+        not isinstance(fallback_data, dict)
+        or fallback_data.get("error")
+        or not isinstance(fallback_data.get("data"), list)
+    ):
+        return _provider_error("countriesnow")
+
+    normalized_query = query.casefold()
+    countries = []
+    for country in fallback_data["data"]:
+        if not isinstance(country, dict) or not isinstance(country.get("name"), str):
+            continue
+        name = country["name"]
+        iso2 = country.get("iso2")
+        if normalized_query not in name.casefold() and normalized_query != str(iso2 or "").casefold():
+            continue
+        capital = country.get("capital")
+        countries.append({
+            "name": {"common": name, "official": name},
+            "cca2": iso2,
+            "region": country.get("region"),
+            "subregion": country.get("subregion"),
+            "capital": [capital] if capital else [],
+            "currencies": {},
+            "latlng": [],
+            "currency_code": country.get("currency"),
+        })
+    return Response({"countries": countries})
 
 
 @api_view(["GET"])
@@ -224,7 +316,7 @@ def public_news_search(request):
     try:
         articles = search_news_articles(query)
     except PublicProviderError:
-        return _provider_error("gdelt")
+        return _provider_error("gdelt-google-news")
     return Response({"query": query, "articles": articles})
 
 

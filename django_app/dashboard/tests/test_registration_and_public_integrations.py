@@ -167,6 +167,32 @@ class PublicIntegrationsApiTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["countries"], country_data)
 
+    def test_country_lookup_falls_back_when_rest_countries_is_unavailable(self):
+        retired_response = Mock(json=lambda: {"success": False, "data": None})
+        fallback_response = Mock(json=lambda: {
+            "error": False,
+            "data": [{
+                "name": "Portugal",
+                "iso2": "PT",
+                "iso3": "PRT",
+                "capital": "Lisbon",
+                "currency": "EUR",
+            }],
+        })
+        with patch(
+            "dashboard.public_integrations.requests.get",
+            side_effect=[retired_response, fallback_response],
+        ):
+            response = self.client.get(
+                "/django/api/integrations/public/countries?q=Portugal"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        country = response.data["countries"][0]
+        self.assertEqual(country["name"]["common"], "Portugal")
+        self.assertEqual(country["cca2"], "PT")
+        self.assertEqual(country["currency_code"], "EUR")
+
     def test_weather_lookup_geocodes_then_fetches_forecast(self):
         place = {"name": "Lisbon", "latitude": 38.72, "longitude": -9.14}
         forecast = {"current": {"temperature_2m": 20}}
@@ -208,3 +234,23 @@ class PublicIntegrationsApiTest(TestCase):
             "/django/api/integrations/public/companies/br?cnpj=123"
         )
         self.assertEqual(invalid_company.status_code, 400)
+
+    def test_news_search_falls_back_to_google_news_rss(self):
+        rss_response = Mock(content=(
+            b"<rss><channel><item><title>Portugal news</title>"
+            b"<link>https://news.example/article</link>"
+            b"<pubDate>Tue, 27 Oct 2026 10:00:00 GMT</pubDate>"
+            b"<source url='https://news.example'>Example News</source>"
+            b"</item></channel></rss>"
+        ))
+        with patch(
+            "dashboard.public_integrations.requests.get",
+            side_effect=[requests.Timeout("GDELT unavailable"), rss_response],
+        ):
+            response = self.client.get(
+                "/django/api/integrations/public/news?q=Portugal"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["articles"][0]["title"], "Portugal news")
+        self.assertEqual(response.data["articles"][0]["domain"], "news.example")

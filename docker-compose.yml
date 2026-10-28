@@ -138,10 +138,14 @@ services:
     volumes:
       - media_data:/app/media
     depends_on:
+      backend:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      disable: true
     profiles: ["worker"]
     restart: unless-stopped
 
@@ -161,10 +165,14 @@ services:
       AUDIT_ALERTS_ENABLED: ${AUDIT_ALERTS_ENABLED:-True}
       AUDIT_DIGEST_HOUR: ${AUDIT_DIGEST_HOUR:-7}
     depends_on:
+      backend:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      disable: true
     profiles: ["worker"]
     restart: unless-stopped
 
