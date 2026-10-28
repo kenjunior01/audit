@@ -21,10 +21,12 @@ RUN pip install --no-cache-dir -r requirements.txt gunicorn
 # 2) código
 COPY . .
 
-RUN chmod +x docker/entrypoint.backend.sh && python manage.py collectstatic --noinput || true
+WORKDIR /app/django_app
+
+RUN chmod +x /app/docker/entrypoint.backend.sh && python manage.py collectstatic --noinput
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=25s --retries=3 \
   CMD curl -fsS http://127.0.0.1:8000/django/api/health || exit 1
 
-ENTRYPOINT ["./docker/entrypoint.backend.sh"]
+ENTRYPOINT ["/app/docker/entrypoint.backend.sh"]

@@ -40,7 +40,10 @@ from . import excel_service as es
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_URL = os.environ.get(
+    "AUDIT_LLM_BASE_URL", os.environ.get("OLLAMA_URL", "http://localhost:11434")
+)
+LLM_API_STYLE = os.environ.get("AUDIT_LLM_API_STYLE", "ollama").lower()
 OLLAMA_MODEL = os.environ.get("AUDIT_OLLAMA_MODEL", "deepseek-r1:1.5b")
 OLLAMA_TIMEOUT = float(os.environ.get("AUDIT_OLLAMA_TIMEOUT", "25"))
 
@@ -964,15 +967,37 @@ def call_ollama_plan(question: str, ctx: dict, sheet_name: str,
         prompt = (SYSTEM_PROMPT + "\n\nESQUEMA DOS DADOS:\n" + context
                   + ("\nCONVERSA ANTERIOR:" + hist if hist else "")
                   + "\n\nJSON:")
-        resp = requests.post(
-            f"{OLLAMA_URL.rstrip('/')}/api/generate",
-            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False,
-                  "options": {"temperature": 0.1, "num_predict": 700}},
-            timeout=OLLAMA_TIMEOUT)
+        if LLM_API_STYLE == "openai-compatible":
+            headers = {"Content-Type": "application/json"}
+            api_key = os.environ.get("AUDIT_LLM_API_KEY")
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            resp = requests.post(
+                f"{OLLAMA_URL.rstrip('/')}/chat/completions",
+                headers=headers,
+                json={
+                    "model": OLLAMA_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.1,
+                    "max_tokens": 700,
+                },
+                timeout=OLLAMA_TIMEOUT,
+            )
+        else:
+            resp = requests.post(
+                f"{OLLAMA_URL.rstrip('/')}/api/generate",
+                json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False,
+                      "options": {"temperature": 0.1, "num_predict": 700}},
+                timeout=OLLAMA_TIMEOUT)
         if resp.status_code != 200:
             logger.info("copilot LLM http %s", resp.status_code)
             return None
-        raw = _strip_think(resp.json().get("response", ""))
+        if LLM_API_STYLE == "openai-compatible":
+            choices = resp.json().get("choices") or []
+            raw = choices[0].get("message", {}).get("content", "") if choices else ""
+        else:
+            raw = resp.json().get("response", "")
+        raw = _strip_think(raw)
         start, end = raw.find("{"), raw.rfind("}")
         if start < 0 or end <= start:
             return None

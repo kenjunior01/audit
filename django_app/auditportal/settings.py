@@ -81,6 +81,22 @@ if _db_url:
             'CONN_MAX_AGE': 60,
         }}
 
+AUTH_PASSWORD_VALIDATORS = [
+    {
+        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        'OPTIONS': {'min_length': 10},
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+    },
+]
+
 LANGUAGE_CODE = 'pt-br'
 TIME_ZONE = 'UTC'
 USE_I18N = True
@@ -112,7 +128,9 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
 
 # Fallback for when Redis is not available (Development/Testing)
-CELERY_TASK_ALWAYS_EAGER = True
+CELERY_TASK_ALWAYS_EAGER = os.environ.get(
+    "AUDIT_CELERY_TASK_ALWAYS_EAGER", "False" if _db_url else "True"
+).lower() in ("1", "true", "yes", "on")
 CELERY_TASK_EAGER_PROPAGATES = True
 
 

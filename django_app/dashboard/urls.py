@@ -27,6 +27,14 @@ from .bi_views import (bi_measures, bi_measure_delete, bi_dimensions,
                        bi_dashboards, bi_dashboard_detail, bi_dashboard_run,
                        bi_qa, bi_export, bi_alerts, bi_alert_detail,
                        bi_alerts_run)
+from .public_integrations import (
+    public_company_lookup,
+    public_country_lookup,
+    public_currency_rates,
+    public_news_search,
+    public_services,
+    public_weather,
+)
 
 router = DefaultRouter()
 router.register(r'governance', AIGovernanceViewSet, basename='governance')
@@ -53,6 +61,12 @@ urlpatterns = [
     path('', include(router.urls)),
     path('auth/register', register_user, name='register_user'),
     path('auth/login', login_user, name='login_user'),
+    path('integrations/public', public_services, name='public_services'),
+    path('integrations/public/currencies', public_currency_rates, name='public_currency_rates'),
+    path('integrations/public/countries', public_country_lookup, name='public_country_lookup'),
+    path('integrations/public/weather', public_weather, name='public_weather'),
+    path('integrations/public/news', public_news_search, name='public_news_search'),
+    path('integrations/public/companies/br', public_company_lookup, name='public_company_lookup'),
     path('health', health, name='health'),
     path('upload/document', upload_document, name='upload_document'),
     path('api/external/ingest', ingest_external_data, name='ingest_external_data'),

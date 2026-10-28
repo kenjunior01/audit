@@ -4,6 +4,7 @@ from django.utils import timezone
 from datetime import timedelta
 from rest_framework.test import APIClient
 from dashboard.models import Transaction, Alert, AuditCase, RegulatoryRule, ApiToken
+from unittest.mock import patch
 
 class InnovationTests(TestCase):
     def setUp(self):
@@ -43,20 +44,35 @@ class InnovationTests(TestCase):
         # Should contain transaction details in analysis text (implicit check via response)
         self.assertIn("Analyzed", response.data['analysis'])
 
-    def test_analyze_news(self):
+    @patch('dashboard.public_integrations.search_news_articles')
+    def test_analyze_news(self, search_news):
         url = reverse('analyze_news')
-        
-        # Test Positive Sentiment Vendor
+
+        search_news.return_value = [{
+            'title': 'Tech Giant announces record profits',
+            'domain': 'example.com',
+            'seendate': '2026-10-27T00:00:00Z',
+            'url': 'https://example.com/news',
+        }]
         data = {'vendor': "Tech Giant"}
         response = self.client.post(url, data, format='json')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['sentiment'], 'positive')
-        
-        # Test Negative Sentiment Vendor (Mock logic)
+
+        search_news.return_value = [{
+            'title': 'Investigation opened into Global Services Inc',
+            'domain': 'example.com',
+            'seendate': '2026-10-27T00:00:00Z',
+            'url': 'https://example.com/investigation',
+        }]
         data = {'vendor': "Global Services Inc"}
         response = self.client.post(url, data, format='json')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['sentiment'], 'negative')
+        self.assertEqual(
+            response.data['news'][0]['url'],
+            'https://example.com/investigation',
+        )
 
     def test_audit_case_sla(self):
         # Create cases

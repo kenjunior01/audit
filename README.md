@@ -16,8 +16,8 @@ e export premium) e um **Copiloto Global** — modelo de suporte em três camada
 └─────────────────────────────┘        └───────────┬──────────────────┘
                                                    │
                               ┌────────────┬───────┴─────┬─────────────┐
-                              │ PostgreSQL │   Redis     │  Ollama     │
-                              │  (dados)   │  (celery)   │ (LLM local) │
+                              │ PostgreSQL │   Redis     │  EXAONE     │
+                              │  (dados)   │  (celery)   │ (llama.cpp) │
                               └────────────┴─────────────┴─────────────┘
 ```
 
@@ -106,6 +106,29 @@ dashboard + download em `/api/reports/audit/pdf?days=30` (papel auditor/admin).
 - OpenAPI 3: `/django/api/schema` + **Swagger UI** `/django/api/schema/swagger-ui`
   + Redoc `/django/api/schema/redoc` (drf-spectacular) — link nas Configurações.
 
+### Registo e integrações públicas gratuitas
+
+O registo (`POST /django/api/auth/register`) cria utilizador, perfil da
+organização e token de acesso atomicamente; login em `/django/api/auth/login`.
+O backend inclui integrações sem chave para câmbio (Frankfurter), países (REST
+Countries), meteorologia (Open-Meteo), notícias (GDELT) e consulta de empresas
+brasileiras (BrasilAPI). Rotas e fontes oficiais de legislação:
+`GET /django/api/integrations/public`. Todas as rotas de dados externos exigem
+token viewer e devolvem erro explícito se o fornecedor estiver indisponível.
+
+O catálogo [public-apis](https://github.com/public-apis/public-apis) reúne
+serviços independentes e não é uma API única; por isso, a plataforma integra
+um conjunto inicial relevante, sem presumir cobertura, disponibilidade ou
+termos uniformes para todos os serviços listados.
+
+### EXAONE 4.0
+
+O perfil Compose `ai` executa o modelo EXAONE 4.0 1.2B Q4_K_M GGUF através de
+llama.cpp, que expõe uma API compatível com OpenAI. Arranque:
+`docker compose --profile ai up -d --build`. O primeiro arranque descarrega o
+modelo; os dados ficam no volume `exaone_data`. Consulte
+[README_INFRA.md](README_INFRA.md) para detalhes e endpoints.
+
 ### BI Studio — Power BI parity via metodologia REA
 
 Aplicámos o método **REA (Reverse Engineer Anything)** — escolher o alvo,
@@ -184,13 +207,15 @@ guardados.
 ### Opção A — Docker (recomendado)
 
 ```bash
-cp .env.example .env            # editar segredos
+cp .env.example .env
+# Gere valores diferentes e preencha AUDIT_DJANGO_SECRET_KEY e POSTGRES_PASSWORD:
+python -c 'import secrets; print(secrets.token_urlsafe(64))'
+python -c 'import secrets; print(secrets.token_hex(32))'
 docker compose up -d --build    # db + redis + api :8000 + web :3000
 
 # opcionais
-docker compose --profile worker up -d      # + celery (digest por agenda)
-docker compose --profile ai up -d          # + Ollama + Qdrant
-docker compose exec ollama ollama pull deepseek-r1:8b
+docker compose --profile worker up -d      # + celery worker e beat (digest/alertas)
+docker compose --profile ai up -d          # + EXAONE/llama.cpp + Qdrant
 ```
 
 Abrir **http://localhost:3000** — API em http://localhost:8000/django/api/health.
@@ -210,13 +235,12 @@ npm install
 npm run dev                     # http://localhost:3000
 ```
 
-> Sem Ollama tudo funciona em **modo determinístico** (router de regras) — o LLM
+> Sem o serviço EXAONE ativo tudo funciona em **modo determinístico** (router de regras) — o LLM
 > só melhora a síntese. Sem SMTP, o email do digest fica em modo console.
 
 ### Credenciais demo
 
-`demo@audit.pt` / `demo1234` (papel **admin**) — ou via API:
-`Authorization: Bearer demo-token-omni`.
+Para dados locais de demonstração, execute `docker compose exec backend python manage.py seed_demo` e entre com `demo@audit.pt` / `demo1234` (papel **admin**). Este utilizador e o token determinístico do seed são apenas para demonstração: não execute o seed em produção nem reutilize estas credenciais.
 
 ---
 
@@ -225,8 +249,8 @@ npm run dev                     # http://localhost:3000
 | Variável | Predefinição | Descrição |
 |---|---|---|
 | `AUDIT_DEBUG` | `False` | Modo debug |
-| `AUDIT_ALLOWED_HOSTS` | `*` | Hosts permitidos (CSV) |
-| `AUDIT_DJANGO_SECRET_KEY` | `change-me` | Segredo Django (obrigatório em prod.) |
+| `AUDIT_ALLOWED_HOSTS` | `localhost,127.0.0.1,backend` | Hosts permitidos (CSV) |
+| `AUDIT_DJANGO_SECRET_KEY` | obrigatório no Compose | Segredo Django longo e aleatório |
 | `AUDIT_DATABASE_URL` | SQLite local | `postgres://user:pass@host:5432/audit` |
 | `AUDIT_CORS_ORIGINS` | `localhost:3000` | Origens CORS (CSV) |
 | `AUDIT_EMAIL_BACKEND` | console | SMTP real: `…smtp.EmailBackend` |
@@ -234,10 +258,11 @@ npm run dev                     # http://localhost:3000
 | `AUDIT_DIGEST_EMAILS` | — | Destinatários do digest (CSV) |
 | `AUDIT_DIGEST_ENABLED` | `False` | Agenda via celery beat |
 | `AUDIT_DIGEST_HOUR` | `7` | Hora do digest diário |
-| `OLLAMA_URL` | `localhost:11434` | Endpoint do LLM local |
-| `AUDIT_OLLAMA_MODEL` | — | Ex.: `deepseek-r1:8b` (vazio = modo regras) |
-| `AUDIT_OLLAMA_TIMEOUT` | `60` | Timeout do LLM (s) |
-| `AUDIT_OLLAMA_PROBE_TTL` | `60` | Cooldown da sonda de disponibilidade (s); Ollama em baixo → chat degrada para regras sem esperar o timeout |
+| `AUDIT_LLM_API_STYLE` | `openai-compatible` no Compose | Protocolo `openai-compatible` (llama.cpp) ou `ollama` |
+| `AUDIT_LLM_BASE_URL` | `http://exaone:8080/v1` no Compose | URL base do servidor de inferência |
+| `AUDIT_OLLAMA_MODEL` | `exaone4.0-1.2b` no Compose | Alias servido pelo modelo local |
+| `AUDIT_OLLAMA_TIMEOUT` | `25` | Timeout do LLM (s) |
+| `AUDIT_OLLAMA_PROBE_TTL` | `60` | Cooldown da sonda de disponibilidade; o copiloto degrada para regras quando o modelo está indisponível |
 | `NEXT_PUBLIC_API_BASE` | `http://127.0.0.1:8000` | Base da API para o proxy do Next |
 
 Lista completa e infra self-hosted: [README_INFRA.md](README_INFRA.md) e

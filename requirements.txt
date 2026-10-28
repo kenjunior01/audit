@@ -6,8 +6,8 @@ djangorestframework>=3.14
 django-filter>=23.0
 django-cors-headers>=4.0
 
-# Banco de dados (descomente para PostgreSQL em produção)
-# psycopg2-binary>=2.9
+# Banco de dados
+psycopg[binary]>=3.2,<4
 
 # Processamento assíncrono
 celery>=5.3
@@ -28,6 +28,7 @@ qdrant-client>=1.8
 
 # Relatórios PDF
 reportlab>=4.0
+pypdf>=5.0,<7.0
 
 # Documentação OpenAPI 3 (Swagger UI / Redoc)
 drf-spectacular>=0.27

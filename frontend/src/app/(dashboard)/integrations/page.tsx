@@ -38,10 +38,28 @@ interface WebhookEvent {
   error_message?: string | null
 }
 
+interface PublicService {
+  id: string
+  category: string
+  name: string
+  url: string
+  requires_key: boolean
+  description: string
+}
+
+interface RegulatorySource {
+  name: string
+  country: string
+  url: string
+  type: string
+}
+
 export default function IntegrationsPage() {
   useRequireToken()
   const [systems, setSystems] = useState<ExternalSystem[]>([])
   const [webhooks, setWebhooks] = useState<WebhookEvent[]>([])
+  const [publicServices, setPublicServices] = useState<PublicService[]>([])
+  const [regulatorySources, setRegulatorySources] = useState<RegulatorySource[]>([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
   const [editingSystem, setEditingSystem] = useState<ExternalSystem | null>(null)
@@ -57,14 +75,18 @@ export default function IntegrationsPage() {
 
   const loadData = async () => {
     try {
-      const [systemsRes, webhooksRes] = await Promise.all([
+      const [systemsRes, webhooksRes, publicServicesRes] = await Promise.all([
         apiFetch('/external-systems/'),
-        apiFetch('/webhook-events/')
+        apiFetch('/webhook-events/'),
+        apiFetch('/integrations/public')
       ])
       const systemsData = await systemsRes.json()
       const webhooksData = await webhooksRes.json()
+      const publicServicesData = publicServicesRes.ok ? await publicServicesRes.json() : null
       setSystems(Array.isArray(systemsData) ? systemsData : (systemsData.results || []))
       setWebhooks(Array.isArray(webhooksData) ? webhooksData : (webhooksData.results || []))
+      setPublicServices(Array.isArray(publicServicesData?.services) ? publicServicesData.services : [])
+      setRegulatorySources(Array.isArray(publicServicesData?.regulatory_sources) ? publicServicesData.regulatory_sources : [])
     } catch (e) {
       console.error('Failed to load data:', e)
     } finally {
@@ -203,6 +225,68 @@ export default function IntegrationsPage() {
           Nova Integração
         </button>
       </div>
+
+      {publicServices.length > 0 && (
+        <section className="space-y-3">
+          <div>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+              APIs públicas sem chave
+            </h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Dados externos de câmbio, empresas, países, notícias e clima. A disponibilidade e os limites dependem de cada fornecedor.
+            </p>
+            <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+              Pesquisas são enviadas ao fornecedor selecionado; não envie dados confidenciais ou pessoais.
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {publicServices.map(service => (
+              <Card key={service.id}>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">{service.name}</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  <p className="text-gray-600 dark:text-gray-300">{service.description}</p>
+                  <div className="flex items-center justify-between">
+                    <span className="rounded bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
+                      {service.requires_key ? 'Requer chave' : 'Sem chave'}
+                    </span>
+                    <a
+                      href={service.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-indigo-600 hover:underline"
+                    >
+                      Documentação <ExternalLink size={14} />
+                    </a>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+          {regulatorySources.length > 0 && (
+            <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+              <h3 className="font-medium text-gray-900 dark:text-white">
+                Fontes regulatórias oficiais
+              </h3>
+              <ul className="mt-2 flex flex-wrap gap-x-5 gap-y-2 text-sm">
+                {regulatorySources.map(source => (
+                  <li key={source.country}>
+                    <a
+                      href={source.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-indigo-600 hover:underline"
+                    >
+                      {source.name} ({source.country})
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </section>
+      )}
 
       <AnimatePresence>
         {toast && (

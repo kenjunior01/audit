@@ -2,11 +2,13 @@ import json
 import requests
 import os
 import math
+import hashlib
 import numpy as np
 from datetime import timedelta
 from django.db.models import Count, Avg, Sum
 from django.utils import timezone
 from .models import Transaction, AiFeedback, Alert, ContextProfile, RegulatoryRule, AuditCase, ReferenceItem, ContextDocument, DocumentChunk, IntegrationSettings, AIGovernanceEvent, RiskAgent, ExternalActionTemplate
+from .llm_client import LLM_MODEL, generate as generate_local_llm, is_available as local_llm_available
 import re
 import logging
 import time
@@ -101,17 +103,12 @@ class AuditAI:
         # Keep self.mem0 for backward compatibility if needed, but rely on service
         self.mem0 = self.mem_service.memory
         
-        # Check if Ollama is actually available for general generation
+        # Probe the configured local model server (Ollama or OpenAI-compatible).
         self.ollama_available = False
-        if self.mem_service.memory: # If memory initialized, Ollama was reachable
+        if self.mem_service.memory:
             self.ollama_available = True
         else:
-            # Quick check if memory is disabled but Ollama is still there
-            try:
-                requests.get("http://localhost:11434", timeout=0.5)
-                self.ollama_available = True
-            except:
-                self.ollama_available = False
+            self.ollama_available = local_llm_available(timeout=0.5)
 
     def _log_governance_event(self, event_type, model_name, input_data, output_data, latency_ms, status='SUCCESS', confidence_score=None):
         """Logs an event for AI Governance monitoring."""
@@ -214,26 +211,12 @@ class AuditAI:
         status = "SUCCESS"
         
         try:
-            # Try Ollama only if available
             if self.ollama_available:
-                import requests
-                model_used = "Ollama/DeepSeek-R1"
-                ollama_resp = requests.post('http://localhost:11434/api/generate', json={
-                    "model": "deepseek-r1:1.5b",
-                    "prompt": prompt,
-                    "stream": False
-                }, timeout=0.5) # Reduced timeout even more
-                if ollama_resp.status_code == 200:
-                    steps = ollama_resp.json().get('response', '')
-                else:
-                    # Fallback to HF
-                    model_used = "HuggingFace/Mistral"
-                    hf_resp = self._query_llm({"inputs": prompt})
-                    if hf_resp and isinstance(hf_resp, list) and 'generated_text' in hf_resp[0]:
-                        steps = hf_resp[0]['generated_text']
-                    else:
-                        status = "FAILED"
-            else:
+                steps = generate_local_llm(
+                    prompt, timeout=0.5, temperature=0.2, max_tokens=900
+                )
+                model_used = f"Local/{LLM_MODEL}"
+            if not self.ollama_available or not steps:
                 model_used = "HuggingFace/Mistral"
                 hf_resp = self._query_llm({"inputs": prompt})
                 if hf_resp and isinstance(hf_resp, list) and 'generated_text' in hf_resp[0]:
@@ -242,7 +225,6 @@ class AuditAI:
                     status = "FAILED"
         except Exception as e:
             status = "FAILED"
-            pass
 
         latency = int((time.time() - start_time) * 1000)
         self._log_governance_event(
@@ -341,34 +323,16 @@ class AuditAI:
         # Call LLM (Reuse _query_llm or generic generation)
         executive_summary = "Resumo indisponível no momento."
         try:
-            # Try Ollama first if available (mimicking generate_work_paper_content logic)
             if self.ollama_available:
-                import requests
-                print("AuditAI: Tentando gerar resumo executivo via Ollama...")
-                ollama_resp = requests.post('http://localhost:11434/api/generate', json={
-                    "model": "deepseek-r1:1.5b",
-                    "prompt": prompt,
-                    "stream": False
-                }, timeout=3)
-                if ollama_resp.status_code == 200:
-                    print("AuditAI: Resumo gerado via Ollama.")
-                    executive_summary = ollama_resp.json().get('response', '')
-                else:
-                    print(f"AuditAI: Ollama retornou {ollama_resp.status_code}. Tentando HF...")
-                    # Fallback
-                    hf_resp = self._query_llm({"inputs": prompt})
-                    if hf_resp and isinstance(hf_resp, list) and 'generated_text' in hf_resp[0]:
-                        print("AuditAI: Resumo gerado via HF.")
-                        executive_summary = hf_resp[0]['generated_text']
+                executive_summary = generate_local_llm(
+                    prompt, timeout=3, temperature=0.2, max_tokens=900
+                )
             else:
-                print("AuditAI: Ollama indisponível para resumo executivo. Tentando HF...")
                 hf_resp = self._query_llm({"inputs": prompt})
                 if hf_resp and isinstance(hf_resp, list) and 'generated_text' in hf_resp[0]:
-                    print("AuditAI: Resumo gerado via HF.")
                     executive_summary = hf_resp[0]['generated_text']
         except Exception as e:
             print(f"AuditAI: Erro no resumo executivo ({type(e).__name__}).")
-            pass
 
         # 3. Structure Response
         report = {
@@ -440,22 +404,13 @@ class AuditAI:
         - Do not include conversational filler. Start directly with the report title.
         """
         
-        # Call LLM
-        # Use _query_llm which falls back to HF, but ideally we use Ollama if available locally
         try:
-             if self.ollama_available:
-                 import requests
-                 print("AuditAI: Tentando gerar papel de trabalho via Ollama...")
-                 ollama_resp = requests.post('http://localhost:11434/api/generate', json={
-                     "model": "deepseek-r1:1.5b",
-                     "prompt": prompt,
-                     "stream": False
-                 }, timeout=3)
-                 if ollama_resp.status_code == 200:
-                     print("AuditAI: Papel de trabalho gerado via Ollama.")
-                     return ollama_resp.json().get('response', '')
-        except:
-             pass
+            if self.ollama_available:
+                return generate_local_llm(
+                    prompt, timeout=3, temperature=0.2, max_tokens=1200
+                )
+        except Exception as error:
+            logger.info("Local LLM unavailable for work paper: %s", error)
 
         # Fallback to HF
         response = self._query_llm({"inputs": prompt})
@@ -616,6 +571,27 @@ class AuditAI:
             "learning_progress": min(100, feedback_stats['total'] * 5) # 20 feedbacks = 100% calibrated
         }
 
+    def _deterministic_fallback_embedding(self, text, dimensions=384):
+        """Stable hash-based embedding so the platform still works offline."""
+        normalized = re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+        vector = [0.0] * dimensions
+        if not normalized:
+            return vector
+
+        tokens = normalized.split()
+        for token in tokens:
+            digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+            base_index = int(digest[:8], 16) % dimensions
+            token_weight = 1.0 + min(len(token), 12) * 0.05
+            vector[base_index] += token_weight
+            for offset in range(1, 4):
+                vector[(base_index + offset) % dimensions] += token_weight * 0.25
+
+        norm = math.sqrt(sum(value * value for value in vector))
+        if norm == 0:
+            return vector
+        return [value / norm for value in vector]
+
     def generate_embedding(self, text):
         """
         Generates embedding using Local Model (preferred) or HF API (fallback).
@@ -624,37 +600,31 @@ class AuditAI:
         print(f"[DEBUG] generate_embedding para texto: {text[:30]}...")
         if not text:
             return None
-            
-        # 1. Try Local Model (Self-Hosted / Open Source)
+
         model = get_local_embedding_model()
         if model:
             try:
                 print("[DEBUG] Usando modelo de embedding local...")
-                # encode returns a numpy array
                 embedding = model.encode(text).tolist()
                 return embedding
             except Exception as e:
                 print(f"Local Embedding Error: {e}")
 
-        # 2. Fallback to API
         print("[DEBUG] Tentando fallback para HF API para embedding...")
-        if not self.api_key:
-            print("[DEBUG] Sem API Key para HF. Abortando embedding.")
-            return None
-            
-        headers = {"Authorization": f"Bearer {self.api_key}"}
-        payload = {"inputs": text, "options": {"wait_for_model": True}}
-        try:
-            response = requests.post(HF_EMBEDDING_URL, headers=headers, json=payload, timeout=2) # Reduzi timeout
-            print(f"[DEBUG] Resposta HF Embedding status: {response.status_code}")
-            data = response.json()
-            # HF API returns list of floats for single string input
-            if isinstance(data, list) and len(data) > 0 and isinstance(data[0], float):
-                return data
-            return None
-        except Exception as e:
-            print(f"Embedding error: {e}")
-            return None
+        if self.api_key:
+            headers = {"Authorization": f"Bearer {self.api_key}"}
+            payload = {"inputs": text, "options": {"wait_for_model": True}}
+            try:
+                response = requests.post(HF_EMBEDDING_URL, headers=headers, json=payload, timeout=2)
+                print(f"[DEBUG] Resposta HF Embedding status: {response.status_code}")
+                data = response.json()
+                if isinstance(data, list) and len(data) > 0 and isinstance(data[0], float):
+                    return data
+            except Exception as e:
+                print(f"Embedding error: {e}")
+
+        print("[DEBUG] Sem modelo local/API disponível; usando embedding determinístico offline.")
+        return self._deterministic_fallback_embedding(text)
 
     def chunk_text(self, text, chunk_size=500, overlap=50):
         """

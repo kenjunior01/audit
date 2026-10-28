@@ -1,6 +1,7 @@
 import json
+import re
 from dateutil import parser
-from rest_framework import viewsets, mixins
+from rest_framework import status, viewsets, mixins
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from django.utils import timezone
@@ -16,6 +17,10 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.contrib.auth.models import User
 from django.contrib.auth import authenticate
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
+from django.db import IntegrityError, transaction as db_transaction
 import uuid
 import os
 from reportlab.lib import colors
@@ -2210,8 +2215,7 @@ def upsert_profile(request):
 def analyze_regulation(request):
     text = request.data.get('text', '')
     transaction_id = request.data.get('transaction_id')
-    
-    # If transaction_id provided, fetch its details to enrich text
+
     if transaction_id:
         try:
             tx = Transaction.objects.get(id=transaction_id)
@@ -2220,20 +2224,54 @@ def analyze_regulation(request):
             pass
 
     if not text:
-         return Response({'analysis': 'No text provided for analysis.', 'matches': []})
+        return Response({'analysis': 'No text provided for analysis.', 'matches': []})
 
-    # Simple keyword matching against RegulatoryRule
+    normalized_text = re.sub(r'[^a-z0-9]+', ' ', text.lower())
+    keyword_aliases = {
+        'bribe': {'bribe', 'bribery', 'kickback', 'corrupt', 'corruption', 'payoff', 'gift'} ,
+        'fraud': {'fraud', 'fraudulent', 'misstatement', 'embezzle', 'embezzlement'},
+        'sanction': {'sanction', 'sanctions', 'restricted', 'embargo'},
+        'tax': {'tax', 'vat', 'withholding', 'tax evasion'},
+    }
+
     matches = []
     rules = RegulatoryRule.objects.filter(active=True)
     for rule in rules:
-        # Check if rule.regulation or keywords in text
-        if rule.regulation.lower() in text.lower() or rule.alert_type.lower() in text.lower():
+        rule_text = ' '.join(filter(None, [rule.regulation, rule.alert_type, rule.description, rule.country]))
+        normalized_rule = re.sub(r'[^a-z0-9]+', ' ', rule_text.lower())
+        matches_rule = any(
+            alias in normalized_text or alias in normalized_rule
+            for aliases in keyword_aliases.values()
+            for alias in aliases
+            if alias in normalized_text or alias in normalized_rule
+        )
+
+        if not matches_rule:
+            compact_text = set(normalized_text.split())
+            compact_rule = set(normalized_rule.split())
+            if compact_text & compact_rule:
+                matches_rule = True
+
+        if matches_rule:
             matches.append({
                 'regulation': rule.regulation,
                 'alert_type': rule.alert_type,
                 'description': rule.description,
                 'country': rule.country
             })
+
+    if not matches:
+        text_tokens = set(re.sub(r'[^a-z0-9]+', ' ', text.lower()).split())
+        for rule in rules:
+            rule_tokens = set(re.sub(r'[^a-z0-9]+', ' ', (rule.regulation + ' ' + rule.alert_type + ' ' + (rule.description or '')).lower()).split())
+            if text_tokens & rule_tokens:
+                matches.append({
+                    'regulation': rule.regulation,
+                    'alert_type': rule.alert_type,
+                    'description': rule.description,
+                    'country': rule.country
+                })
+
     return Response({'analysis': f"Analyzed {len(rules)} rules.", 'matches': matches})
 
 @api_view(['GET'])
@@ -2298,47 +2336,62 @@ def generate_case_report(request, pk):
 @api_view(['POST'])
 @permission_classes([IsAuditorOrAdmin])
 def analyze_news(request):
-    vendor = request.data.get('vendor')
+    vendor = (request.data.get('vendor') or '').strip()
     if not vendor:
         return Response({'news': [], 'sentiment': 'neutral'})
 
-    # Mock News API
-    # In production, this would call Google News API or similar
-    import random
-    
+    from .public_integrations import PublicProviderError, search_news_articles
+
+    try:
+        articles = search_news_articles(f'"{vendor}"')
+    except PublicProviderError:
+        return Response(
+            {'error': 'News provider is unavailable', 'provider': 'gdelt'},
+            status=502,
+        )
+
+    negative_terms = re.compile(
+        r'\b(fraud|investigation|bribery|corruption|sanction|lawsuit|fine|'
+        r'scandal|embezzlement|misconduct|accounting irregularit)\w*\b',
+        re.IGNORECASE,
+    )
+    positive_terms = re.compile(
+        r'\b(growth|profit|award|expansion|investment|record|launch|'
+        r'innovation|partnership)\w*\b',
+        re.IGNORECASE,
+    )
     news_items = []
-    sentiment = 'neutral'
-    
-    # Deterministic mock for demo purposes
-    if 'Tech' in vendor or 'Consulting' in vendor:
+    negative_count = 0
+    positive_count = 0
+    for article in articles:
+        title = article.get('title') or ''
+        sentiment = 'neutral'
+        if negative_terms.search(title):
+            sentiment = 'negative'
+            negative_count += 1
+        elif positive_terms.search(title):
+            sentiment = 'positive'
+            positive_count += 1
         news_items.append({
-            'title': f"{vendor} announces record profits",
-            'source': 'Financial Times',
-            'date': '2023-10-25',
-            'sentiment': 'positive'
+            'title': title,
+            'source': article.get('domain') or article.get('source') or 'Unknown',
+            'date': article.get('seendate'),
+            'url': article.get('url'),
+            'sentiment': sentiment,
         })
-        sentiment = 'positive'
-    elif 'Global' in vendor or 'Services' in vendor:
-        news_items.append({
-            'title': f"Investigation opened into {vendor} accounting practices",
-            'source': 'Reuters',
-            'date': '2023-10-20',
-            'sentiment': 'negative'
-        })
-        sentiment = 'negative'
-    else:
-        news_items.append({
-            'title': f"{vendor} expands into new markets",
-            'source': 'Local Business',
-            'date': '2023-10-22',
-            'sentiment': 'neutral'
-        })
+
+    sentiment = (
+        'negative' if negative_count > positive_count and negative_count
+        else 'positive' if positive_count > negative_count and positive_count
+        else 'neutral'
+    )
 
     return Response({
         'vendor': vendor,
         'news': news_items,
         'sentiment': sentiment,
-        'risk_score': 0.8 if sentiment == 'negative' else 0.1
+        'risk_score': 0.8 if sentiment == 'negative' else 0.1,
+        'source': 'GDELT',
     })
 
 @api_view(['POST'])
@@ -2349,12 +2402,16 @@ def wizard(request):
 @api_view(['GET'])
 @permission_classes([IsViewerOrAbove])
 def fetch_news_sources(request):
-    return Response({'sources': []})
+    from .public_integrations import PUBLIC_SERVICES
+    return Response({
+        'sources': [source for source in PUBLIC_SERVICES if source['category'] == 'news_risk']
+    })
 
 @api_view(['GET'])
 @permission_classes([IsViewerOrAbove])
 def fetch_regulatory_sources(request):
-    return Response({'sources': []})
+    from .public_integrations import REGULATORY_SOURCES
+    return Response({'sources': REGULATORY_SOURCES})
 
 @api_view(['GET'])
 @permission_classes([IsViewerOrAbove])
@@ -2534,61 +2591,94 @@ def simulate_rule(request):
 @permission_classes([AllowAny])
 def register_user(request):
     data = request.data
-    email = data.get('email')
+    email_value = data.get('email')
     password = data.get('password')
-    name = data.get('name')
-    company = data.get('company_name')
-    sector = data.get('sector', 'Other')
-    
-    if not email or not password:
-        return Response({'error': 'Email and password are required'}, status=400)
-        
-    if User.objects.filter(username=email).exists():
-        return Response({'error': 'User already exists'}, status=400)
-        
-    try:
-        # Create Django User
-        user = User.objects.create_user(username=email, email=email, password=password)
-        user.first_name = name or ''
-        user.save()
-        
-        # Create API Token
-        token_str = uuid.uuid4().hex
-        ApiToken.objects.create(token=token_str, user_id=str(user.id), role='viewer')
-        
-        # Create Context Profile (Organization Context)
-        ContextProfile.objects.create(
-            user_id=str(user.id),
-            persona='Standard Auditor',
-            department=company, 
-            sector=sector,
-            org_structure='Functional',
-            onboarding_data={'company_name': company, 'registration_date': str(timezone.now())}
+    name_value = data.get('name')
+    company_value = data.get('company_name')
+    sector_value = data.get('sector') or 'Other'
+
+    if not all(isinstance(value, str) for value in (email_value, password, name_value, company_value, sector_value)):
+        return Response({'error': 'Registration fields must be text'}, status=400)
+    email = email_value.strip().lower()
+    name = name_value.strip()
+    company = company_value.strip()
+    sector = sector_value.strip()
+
+    if not email or not password or not name or not company:
+        return Response(
+            {'error': 'Name, email, password and company_name are required'},
+            status=400,
         )
-        
-        return Response({
-            'token': token_str,
-            'user_id': user.id,
-            'role': 'viewer',
-            'message': 'Registration successful. Please complete KYC.'
-        })
-    except Exception as e:
-        return Response({'error': str(e)}, status=500)
+    try:
+        validate_email(email)
+    except ValidationError:
+        return Response({'error': 'Enter a valid email address'}, status=400)
+    try:
+        validate_password(
+            password,
+            User(username=email, email=email, first_name=name),
+        )
+    except ValidationError as error:
+        return Response({'error': ' '.join(error.messages)}, status=400)
+    if User.objects.filter(username__iexact=email).exists():
+        return Response({'error': 'User already exists'}, status=409)
+
+    try:
+        with db_transaction.atomic():
+            user = User.objects.create_user(
+                username=email,
+                email=email,
+                password=password,
+                first_name=name,
+            )
+            token_str = uuid.uuid4().hex
+            ApiToken.objects.create(
+                token=token_str,
+                user_id=str(user.id),
+                role='viewer',
+            )
+            ContextProfile.objects.create(
+                user_id=str(user.id),
+                persona='Standard Auditor',
+                department=company,
+                sector=sector,
+                org_structure='Functional',
+                onboarding_data={
+                    'company_name': company,
+                    'registration_date': str(timezone.now()),
+                },
+            )
+    except IntegrityError:
+        return Response({'error': 'User already exists'}, status=409)
+    except Exception:
+        return Response({'error': 'Unable to create account'}, status=500)
+
+    return Response({
+        'token': token_str,
+        'user_id': user.id,
+        'role': 'viewer',
+        'message': 'Registration successful. Please complete KYC.'
+    }, status=201)
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def login_user(request):
-    email = request.data.get('email')
+    email_value = request.data.get('email')
     password = request.data.get('password')
-    
+
+    if not isinstance(email_value, str) or not isinstance(password, str):
+        return Response({'error': 'Email and password are required'}, status=400)
+    email = email_value.strip().lower()
     if not email or not password:
         return Response({'error': 'Email and password are required'}, status=400)
 
-    user = authenticate(username=email, password=password)
+    username = User.objects.filter(username__iexact=email).values_list(
+        'username', flat=True
+    ).first()
+    user = authenticate(username=username, password=password) if username else None
     if not user:
         return Response({'error': 'Invalid credentials'}, status=401)
-        
-    # Get or create token
+
     try:
         token_obj = ApiToken.objects.filter(user_id=str(user.id)).first()
         if not token_obj:
@@ -2601,8 +2691,8 @@ def login_user(request):
             'role': token_obj.role,
             'name': user.first_name or user.username
         })
-    except Exception as e:
-        return Response({'error': str(e)}, status=500)
+    except Exception:
+        return Response({'error': 'Unable to complete login'}, status=500)
 
 @api_view(['POST'])
 @permission_classes([IsAuditorOrAdmin])
@@ -2665,4 +2755,4 @@ def health(request):
         "status": "ok" if db_ok else "degraded",
         "db": db_ok,
         "service": "audit-api",
-    })
+    }, status=status.HTTP_200_OK if db_ok else status.HTTP_503_SERVICE_UNAVAILABLE)

@@ -83,3 +83,22 @@ class CallOllamaShortCircuitTest(TestCase):
             out = cs.call_ollama_copilot("pergunta", [])
         self.assertIsNotNone(out)
         self.assertEqual(out["answer"], "ok")
+
+    def test_call_supports_openai_compatible_local_model(self):
+        probe = mock.Mock(status_code=200)
+        completion = mock.Mock(status_code=200)
+        completion.json.return_value = {
+            "choices": [{"message": {"content": '{"answer": "exaone ok"}'}}]
+        }
+        with mock.patch.object(cs, "LLM_API_STYLE", "openai-compatible"), \
+                mock.patch.object(cs, "OLLAMA_URL", "http://exaone:8080/v1"), \
+                mock.patch("requests.get", return_value=probe) as mget, \
+                mock.patch("requests.post", return_value=completion) as mpost:
+            out = cs.call_ollama_copilot("pergunta", [])
+
+        self.assertEqual(out["answer"], "exaone ok")
+        self.assertEqual(mget.call_args.args[0], "http://exaone:8080/v1/models")
+        self.assertEqual(
+            mpost.call_args.args[0],
+            "http://exaone:8080/v1/chat/completions",
+        )
