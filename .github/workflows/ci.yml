@@ -59,7 +59,8 @@ jobs:
             dashboard.tests.test_bi_dashboards \
             dashboard.tests.test_bi_qa \
             dashboard.tests.test_bi_alerts \
-            dashboard.tests.test_bi_export
+            dashboard.tests.test_bi_export \
+            dashboard.tests.test_alert_digest
 
   frontend:
     name: Next.js — build

@@ -57,6 +57,16 @@ duplicados, materialidade) e **documentos repetidos entre os dois ficheiros**
 (sinal clássico de pagamento duplicado), com veredicto determinístico
 (estável/moderado/acentuado) e relatório Excel dedicado.
 
+**Digest semanal de alertas**: todas as segundas-feiras às 08:00
+(celery beat com `AUDIT_ALERT_DIGEST_ENABLED=true` ou
+`manage.py send_alert_digest` em cron clássico), a plataforma resume o estado
+dos alertas BI — regras ativas, violações, erros, regras novas no período e
+top ofensores por contagem acumulada — e entrega por dois canais: Central de
+Notificações (in-app, admin/auditor, severidade crítica quando há violações)
+e email para `AUDIT_DIGEST_EMAILS` (best-effort). Quando há LLM disponível
+(`llm_client` — EXAONE/Ollama ou API OpenAI-compatible), o digest abre com um
+resumo executivo gerado por IA; sem LLM, usa texto determinístico em PT.
+
 ### Copiloto IA (NL → Excel)
 
 Conversa em português ou inglês: *"mostra o top 10 fornecedores por valor"*, *"adiciona uma coluna com o mês"*.
@@ -199,6 +209,17 @@ Cada decisão do motor é devolvida em `meta.choices` com a evidência
 (espírito REA: findings com provas). Utilizadores avançados continuam com o
 BI Studio (`/bi`) para medidas DAX-like, pipelines ETL, RLS e relatórios
 guardados.
+
+#### i18n PT/EN
+
+A interface principal é bilingue: o **toggle PT/EN** no cabeçalho troca o
+idioma de toda a shell (sidebar, cabeçalho, sair) e do **Painel Auto**
+(títulos, slicers, Q&A, alertas ao vivo, estados e mensagens de erro). A
+escolha persiste no `localStorage` (`audit-lang`), o padrão é português e a
+tradução é feita pelo dicionário plano em `frontend/src/lib/i18n.tsx`
+(pares `[pt, en]` — acrescentar uma chave aí basta para estender). As
+perguntas de exemplo do Q&A continuam em PT porque o motor determinístico
+`/bi/qa` interpreta português; BI Studio (`/bi`) mantém-se em PT na v1.
 
 ---
 
