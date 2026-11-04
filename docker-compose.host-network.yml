@@ -10,7 +10,11 @@ services:
       CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/0
       OLLAMA_URL: http://127.0.0.1:11434
       QDRANT_URL: http://127.0.0.1:6333
-      AUDIT_LLM_BASE_URL: http://127.0.0.1:8080/v1
+      AUDIT_LLM_API_STYLE: ${AUDIT_LLM_API_STYLE:-openai-compatible}
+      AUDIT_LLM_BASE_URL: ${AUDIT_LLM_BASE_URL:-http://127.0.0.1:8080/v1}
+      AUDIT_OLLAMA_MODEL: ${AUDIT_OLLAMA_MODEL:-exaone4.0-1.2b}
+      AUDIT_LLM_API_KEY: ${AUDIT_LLM_API_KEY:-${GROQ_API_KEY:-}}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
       GUNICORN_BIND: 127.0.0.1:8000
 
   frontend:
@@ -32,7 +36,11 @@ services:
       CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/0
       OLLAMA_URL: http://127.0.0.1:11434
       QDRANT_URL: http://127.0.0.1:6333
-      AUDIT_LLM_BASE_URL: http://127.0.0.1:8080/v1
+      AUDIT_LLM_API_STYLE: ${AUDIT_LLM_API_STYLE:-openai-compatible}
+      AUDIT_LLM_BASE_URL: ${AUDIT_LLM_BASE_URL:-http://127.0.0.1:8080/v1}
+      AUDIT_OLLAMA_MODEL: ${AUDIT_OLLAMA_MODEL:-exaone4.0-1.2b}
+      AUDIT_LLM_API_KEY: ${AUDIT_LLM_API_KEY:-${GROQ_API_KEY:-}}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
 
   celery-beat:
     network_mode: host

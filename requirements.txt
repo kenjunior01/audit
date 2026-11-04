@@ -12,6 +12,7 @@ psycopg[binary]>=3.2,<4
 # Processamento assíncrono
 celery>=5.3
 redis>=5.0
+packaging>=23.2
 
 # Excel Studio (super auxílio de documentos)
 pandas>=2.0

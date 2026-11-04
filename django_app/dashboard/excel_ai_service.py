@@ -37,6 +37,7 @@ import numpy as np
 import pandas as pd
 
 from . import excel_service as es
+from .llm_client import LLM_API_KEY, openai_compatible_headers
 
 logger = logging.getLogger(__name__)
 
@@ -957,6 +958,9 @@ def _strip_think(text: str) -> str:
 def call_ollama_plan(question: str, ctx: dict, sheet_name: str,
                      history: list = None) -> dict:
     """Pede o plano JSON ao Ollama. Devolve dict validado ou None."""
+    if LLM_API_STYLE == "openai-compatible" and \
+            "api.groq.com" in OLLAMA_URL and not LLM_API_KEY:
+        return None
     try:
         import requests
         context = build_llm_context(ctx, sheet_name, question)
@@ -968,8 +972,8 @@ def call_ollama_plan(question: str, ctx: dict, sheet_name: str,
                   + ("\nCONVERSA ANTERIOR:" + hist if hist else "")
                   + "\n\nJSON:")
         if LLM_API_STYLE == "openai-compatible":
-            headers = {"Content-Type": "application/json"}
-            api_key = os.environ.get("AUDIT_LLM_API_KEY")
+            headers = openai_compatible_headers()
+            api_key = LLM_API_KEY
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
             resp = requests.post(

@@ -9,13 +9,25 @@ LLM_BASE_URL = os.environ.get(
     os.environ.get("OLLAMA_URL", "http://localhost:11434"),
 ).rstrip("/")
 LLM_MODEL = os.environ.get("AUDIT_OLLAMA_MODEL", "deepseek-r1:1.5b")
-LLM_API_KEY = os.environ.get("AUDIT_LLM_API_KEY", "")
+LLM_API_KEY = os.environ.get("AUDIT_LLM_API_KEY") or os.environ.get("GROQ_API_KEY", "")
+
+
+def openai_compatible_headers():
+    headers = {"Content-Type": "application/json"}
+    if LLM_API_KEY:
+        headers["Authorization"] = f"Bearer {LLM_API_KEY}"
+    return headers
 
 
 def is_available(timeout=2.5):
+    if "api.groq.com" in LLM_BASE_URL and not LLM_API_KEY:
+        return False
     endpoint = "/models" if LLM_API_STYLE == "openai-compatible" else "/api/tags"
     try:
-        response = requests.get(f"{LLM_BASE_URL}{endpoint}", timeout=timeout)
+        kwargs = {"timeout": timeout}
+        if LLM_API_STYLE == "openai-compatible":
+            kwargs["headers"] = openai_compatible_headers()
+        response = requests.get(f"{LLM_BASE_URL}{endpoint}", **kwargs)
         return response.status_code == 200
     except requests.RequestException:
         return False

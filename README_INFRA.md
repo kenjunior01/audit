@@ -43,6 +43,34 @@ núcleo (postgres + redis + API Django + dashboard Next.js), `worker`
     ```
     The model is downloaded automatically; wait for `audit_exaone` to become healthy.
 
+### Groq cloud AI (alternative to local EXAONE)
+
+Groq uses the OpenAI-compatible API. Create a key at
+[console.groq.com/keys](https://console.groq.com/keys), then add it only to the
+ignored local `.env` file:
+
+```dotenv
+AUDIT_LLM_API_STYLE=openai-compatible
+AUDIT_LLM_BASE_URL=https://api.groq.com/openai/v1
+AUDIT_OLLAMA_MODEL=llama-3.3-70b-versatile
+GROQ_API_KEY=your-key
+```
+
+The model ID is listed in Groq's
+[current model catalog](https://console.groq.com/docs/models); availability
+and free-tier limits can change. `AUDIT_LLM_API_KEY` can be used instead of
+`GROQ_API_KEY`. Recreate the application services after changing `.env`:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.host-network.yml up -d --force-recreate backend
+docker compose -f docker-compose.yml -f docker-compose.host-network.yml --profile worker up -d --force-recreate celery-worker
+```
+
+Groq is a cloud provider: prompts and any included transaction or company data
+are sent to Groq for inference. Use local EXAONE when those data must not leave
+your environment. The app falls back to deterministic rules if Groq is
+unavailable, the key is missing, or a request fails.
+
 3.  Add the Celery worker and scheduler (scheduled digest, alerts, emails, agents):
     ```bash
     docker compose --profile worker up -d

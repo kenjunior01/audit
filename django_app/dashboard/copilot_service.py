@@ -36,6 +36,7 @@ from django.utils import timezone
 
 from .models import (Alert, AuditCase, CopilotFeedback, ExcelImportJob,
                      RiskAgent, Transaction)
+from .llm_client import LLM_API_KEY, openai_compatible_headers
 
 logger = logging.getLogger(__name__)
 
@@ -1459,7 +1460,12 @@ def ollama_available() -> bool:
     try:
         import requests
         endpoint = "/models" if LLM_API_STYLE == "openai-compatible" else "/api/tags"
-        r = requests.get(f"{OLLAMA_URL.rstrip('/')}{endpoint}", timeout=2.5)
+        kwargs = {"timeout": 2.5}
+        if LLM_API_STYLE == "openai-compatible":
+            if "api.groq.com" in OLLAMA_URL and not LLM_API_KEY:
+                return False
+            kwargs["headers"] = openai_compatible_headers()
+        r = requests.get(f"{OLLAMA_URL.rstrip('/')}{endpoint}", **kwargs)
         if r.status_code == 200:
             _ollama_down_until = 0.0
             return True
@@ -1490,8 +1496,8 @@ def call_ollama_copilot(question: str, tool_results: list,
                   + "\n\nPERGUNTA: " + question[:500]
                   + "\n\nJSON:")
         if LLM_API_STYLE == "openai-compatible":
-            headers = {"Content-Type": "application/json"}
-            api_key = os.environ.get("AUDIT_LLM_API_KEY")
+            headers = openai_compatible_headers()
+            api_key = LLM_API_KEY
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
             resp = requests.post(

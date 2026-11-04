@@ -279,9 +279,10 @@ Para dados locais de demonstração, execute `docker compose exec backend python
 | `AUDIT_DIGEST_EMAILS` | — | Destinatários do digest (CSV) |
 | `AUDIT_DIGEST_ENABLED` | `False` | Agenda via celery beat |
 | `AUDIT_DIGEST_HOUR` | `7` | Hora do digest diário |
-| `AUDIT_LLM_API_STYLE` | `openai-compatible` no Compose | Protocolo `openai-compatible` (llama.cpp) ou `ollama` |
-| `AUDIT_LLM_BASE_URL` | `http://exaone:8080/v1` no Compose | URL base do servidor de inferência |
-| `AUDIT_OLLAMA_MODEL` | `exaone4.0-1.2b` no Compose | Alias servido pelo modelo local |
+| `AUDIT_LLM_API_STYLE` | `openai-compatible` no Compose | Protocolo `openai-compatible` (EXAONE/llama.cpp ou Groq) ou `ollama` |
+| `AUDIT_LLM_BASE_URL` | `http://exaone:8080/v1` no Compose | URL base; Groq usa `https://api.groq.com/openai/v1` |
+| `AUDIT_OLLAMA_MODEL` | `exaone4.0-1.2b` no Compose | Alias ou ID do modelo (Groq: `llama-3.3-70b-versatile`) |
+| `GROQ_API_KEY` / `AUDIT_LLM_API_KEY` | — | Chave Groq; mantenha apenas no `.env` local, nunca no Git |
 | `AUDIT_OLLAMA_TIMEOUT` | `25` | Timeout do LLM (s) |
 | `AUDIT_OLLAMA_PROBE_TTL` | `60` | Cooldown da sonda de disponibilidade; o copiloto degrada para regras quando o modelo está indisponível |
 | `NEXT_PUBLIC_API_BASE` | `http://127.0.0.1:8000` | Base da API para o proxy do Next |
