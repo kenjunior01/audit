@@ -54,6 +54,12 @@ interface RegulatorySource {
   type: string
 }
 
+type PublicApiKind = 'currencies' | 'countries' | 'weather' | 'news' | 'companies/br'
+
+function isPublicApiKind(value: string): value is PublicApiKind {
+  return ['currencies', 'countries', 'weather', 'news', 'companies/br'].includes(value)
+}
+
 export default function IntegrationsPage() {
   useRequireToken()
   const [systems, setSystems] = useState<ExternalSystem[]>([])
@@ -61,6 +67,13 @@ export default function IntegrationsPage() {
   const [publicServices, setPublicServices] = useState<PublicService[]>([])
   const [regulatorySources, setRegulatorySources] = useState<RegulatorySource[]>([])
   const [loading, setLoading] = useState(true)
+  const [publicApiKind, setPublicApiKind] = useState<PublicApiKind>('currencies')
+  const [publicApiValue, setPublicApiValue] = useState('')
+  const [currencyBase, setCurrencyBase] = useState('EUR')
+  const [currencySymbols, setCurrencySymbols] = useState('USD,BRL')
+  const [publicApiLoading, setPublicApiLoading] = useState(false)
+  const [publicApiResult, setPublicApiResult] = useState<unknown>(null)
+  const [publicApiError, setPublicApiError] = useState('')
   const [showModal, setShowModal] = useState(false)
   const [editingSystem, setEditingSystem] = useState<ExternalSystem | null>(null)
   const [formData, setFormData] = useState<Partial<ExternalSystem>>({
@@ -97,6 +110,57 @@ export default function IntegrationsPage() {
   useEffect(() => {
     loadData()
   }, [])
+
+  const handlePublicApiSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    setPublicApiLoading(true)
+    setPublicApiError('')
+    setPublicApiResult(null)
+
+    const params = new URLSearchParams()
+    let path: string
+    switch (publicApiKind) {
+      case 'currencies':
+        path = '/integrations/public/currencies'
+        params.set('base', currencyBase.trim())
+        if (currencySymbols.trim()) params.set('symbols', currencySymbols.trim())
+        break
+      case 'countries':
+        path = '/integrations/public/countries'
+        params.set('q', publicApiValue.trim())
+        break
+      case 'weather':
+        path = '/integrations/public/weather'
+        params.set('location', publicApiValue.trim())
+        break
+      case 'news':
+        path = '/integrations/public/news'
+        params.set('q', publicApiValue.trim())
+        break
+      case 'companies/br':
+        path = '/integrations/public/companies/br'
+        params.set('cnpj', publicApiValue.trim())
+        break
+    }
+
+    try {
+      const response = await apiFetch(`${path}?${params.toString()}`)
+      const data: unknown = await response.json()
+      if (!response.ok) {
+        const message =
+          typeof data === 'object' && data !== null && 'error' in data &&
+          typeof data.error === 'string'
+            ? data.error
+            : `O fornecedor devolveu HTTP ${response.status}`
+        throw new Error(message)
+      }
+      setPublicApiResult(data)
+    } catch (error) {
+      setPublicApiError(error instanceof Error ? error.message : 'Não foi possível consultar a API')
+    } finally {
+      setPublicApiLoading(false)
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -264,6 +328,111 @@ export default function IntegrationsPage() {
               </Card>
             ))}
           </div>
+          <Card>
+            <CardHeader>
+              <CardTitle>Consultar APIs públicas</CardTitle>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Os resultados vêm dos fornecedores em tempo real. Não introduza informação confidencial.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <form onSubmit={handlePublicApiSubmit} className="grid gap-3 md:grid-cols-[minmax(12rem,1fr)_2fr_auto] md:items-end">
+                <div>
+                  <label htmlFor="public-api-kind" className="mb-1 block text-sm font-medium">
+                    Serviço
+                  </label>
+                  <select
+                    id="public-api-kind"
+                    value={publicApiKind}
+                    onChange={event => {
+                      if (isPublicApiKind(event.target.value)) {
+                        setPublicApiKind(event.target.value)
+                      }
+                      setPublicApiValue('')
+                      setPublicApiResult(null)
+                      setPublicApiError('')
+                    }}
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                  >
+                    <option value="currencies">Taxas de câmbio</option>
+                    <option value="countries">Países</option>
+                    <option value="weather">Meteorologia</option>
+                    <option value="news">Notícias</option>
+                    <option value="companies/br">Empresa brasileira (CNPJ)</option>
+                  </select>
+                </div>
+                {publicApiKind === 'currencies' ? (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label htmlFor="currency-base" className="mb-1 block text-sm font-medium">
+                        Moeda base
+                      </label>
+                      <input
+                        id="currency-base"
+                        required
+                        maxLength={3}
+                        value={currencyBase}
+                        onChange={event => setCurrencyBase(event.target.value.toUpperCase())}
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 uppercase text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                        placeholder="EUR"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="currency-symbols" className="mb-1 block text-sm font-medium">
+                        Moedas destino
+                      </label>
+                      <input
+                        id="currency-symbols"
+                        value={currencySymbols}
+                        onChange={event => setCurrencySymbols(event.target.value.toUpperCase())}
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 uppercase text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                        placeholder="USD,BRL"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <label htmlFor="public-api-value" className="mb-1 block text-sm font-medium">
+                      {publicApiKind === 'countries' && 'Nome ou código do país'}
+                      {publicApiKind === 'weather' && 'Localidade'}
+                      {publicApiKind === 'news' && 'Termo de pesquisa'}
+                      {publicApiKind === 'companies/br' && 'CNPJ'}
+                    </label>
+                    <input
+                      id="public-api-value"
+                      required
+                      maxLength={publicApiKind === 'news' ? 200 : publicApiKind === 'companies/br' ? 18 : 100}
+                      value={publicApiValue}
+                      onChange={event => setPublicApiValue(event.target.value)}
+                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                      placeholder={
+                        publicApiKind === 'countries' ? 'Portugal' :
+                        publicApiKind === 'weather' ? 'Lisboa' :
+                        publicApiKind === 'news' ? 'risco financeiro' : '00.000.000/0001-91'
+                      }
+                    />
+                  </div>
+                )}
+                <button
+                  type="submit"
+                  disabled={publicApiLoading}
+                  className="rounded-lg bg-indigo-600 px-4 py-2 font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {publicApiLoading ? 'A consultar…' : 'Consultar'}
+                </button>
+              </form>
+              {publicApiError && (
+                <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800 dark:bg-red-950 dark:text-red-200">
+                  {publicApiError}
+                </p>
+              )}
+              {publicApiResult !== null && (
+                <pre className="max-h-96 overflow-auto rounded-lg bg-gray-950 p-4 text-xs text-green-200">
+                  {JSON.stringify(publicApiResult, null, 2)}
+                </pre>
+              )}
+            </CardContent>
+          </Card>
           {regulatorySources.length > 0 && (
             <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
               <h3 className="font-medium text-gray-900 dark:text-white">
