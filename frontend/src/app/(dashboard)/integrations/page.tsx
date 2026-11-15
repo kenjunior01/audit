@@ -6,6 +6,7 @@ import { useRequireToken } from '@/lib/auth'
 import { Plus, Trash2, ExternalLink, Play, TestTube2, Eye } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { AiEnginesCard } from "@/components/dashboard/AiEnginesCard"
 
 interface ExternalSystem {
   id: number
@@ -289,6 +290,8 @@ export default function IntegrationsPage() {
           Nova Integração
         </button>
       </div>
+
+      <AiEnginesCard />
 
       {publicServices.length > 0 && (
         <section className="space-y-3">

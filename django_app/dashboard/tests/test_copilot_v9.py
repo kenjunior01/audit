@@ -13,6 +13,7 @@ from unittest import mock
 from django.test import TestCase
 
 from dashboard import copilot_service as cs
+from dashboard import llm_client
 
 
 def _reset_state():
@@ -90,7 +91,12 @@ class CallOllamaShortCircuitTest(TestCase):
         completion.json.return_value = {
             "choices": [{"message": {"content": '{"answer": "exaone ok"}'}}]
         }
-        with mock.patch.object(cs, "LLM_API_STYLE", "openai-compatible"), \
+        # llm_client v2: o transporte primário (openai-compatible/ollama) vive
+        # no llm_client — o patch passou a ser feito no módulo do cliente.
+        with mock.patch.object(llm_client, "LLM_API_STYLE", "openai-compatible"), \
+                mock.patch.object(llm_client, "LLM_BASE_URL", "http://exaone:8080/v1"), \
+                mock.patch.object(llm_client, "LLM_MODEL", "deepseek-r1:1.5b"), \
+                mock.patch.object(cs, "LLM_API_STYLE", "openai-compatible"), \
                 mock.patch.object(cs, "OLLAMA_URL", "http://exaone:8080/v1"), \
                 mock.patch("requests.get", return_value=probe) as mget, \
                 mock.patch("requests.post", return_value=completion) as mpost:

@@ -115,6 +115,11 @@ export default function StudioPage() {
   const [runMsg, setRunMsg] = useState('')
   const [runBad, setRunBad] = useState(false)
 
+  // --- Resumo IA (narração executiva do painel)
+  const [aiText, setAiText] = useState('')
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiMeta, setAiMeta] = useState<{ provider: string | null, available: boolean } | null>(null)
+
   const filters = useMemo(() => {
     const f: Row[] = []
     if (period === '30' || period === '90') {
@@ -217,6 +222,24 @@ export default function StudioPage() {
   }, [])
 
   useEffect(() => { loadAlerts() /* eslint-disable-line react-hooks/exhaustive-deps */ }, [loadAlerts])
+
+  async function narrateInsights() {
+    if (!data || aiBusy) return
+    setAiBusy(true); setAiText(''); setAiMeta(null)
+    try {
+      const r = await apiFetch('/bi/narrate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kpis: data.kpis, insights: data.insights, period }),
+      })
+      const d = await r.json()
+      if (!r.ok) { setErr(d.error || `erro ${r.status}`); return }
+      setAiText(d.narrative || '')
+      setAiMeta({ provider: d.provider ?? null, available: !!d.available })
+    } catch {
+      setAiText(t('studio.ai_unavailable'))
+      setAiMeta({ provider: null, available: false })
+    } finally { setAiBusy(false) }
+  }
 
   async function runAlerts() {
     setRunBusy(true); setAlertsErr(''); setRunMsg('')
@@ -373,9 +396,25 @@ export default function StudioPage() {
       {/* ------------------------------------------------- insights */}
       {data && !data.empty && data.insights.length > 0 && (
         <div className={`${card} border-l-4 !border-l-amber-400`}>
-          <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1.5 mb-2">
-            <Lightbulb className="w-3.5 h-3.5 text-amber-500" /> {t('studio.insights_title')}
-          </p>
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
+            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+              <Lightbulb className="w-3.5 h-3.5 text-amber-500" /> {t('studio.insights_title')}
+            </p>
+            <button onClick={narrateInsights} disabled={aiBusy}
+                    className="ml-auto px-2.5 py-1 rounded-lg text-[11px] font-medium border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/30 flex items-center gap-1 disabled:opacity-50 transition-colors">
+              {aiBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} {t('studio.ai_summary')}
+            </button>
+          </div>
+          {aiText && (
+            <p className="text-sm text-gray-700 dark:text-slate-300 bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800 rounded-lg px-3 py-2 mb-2 whitespace-pre-line">
+              {aiText}
+              {aiMeta && (
+                <span className="block mt-1 text-[10px] text-slate-400">
+                  {aiMeta.available ? `${t('studio.ai_via')} ${aiMeta.provider}` : t('studio.ai_unavailable')}
+                </span>
+              )}
+            </p>
+          )}
           <ul className="space-y-1.5">
             {data.insights.map((s: string, i: number) => (
               <li key={i} className="text-sm text-gray-700 dark:text-slate-300 flex gap-2">

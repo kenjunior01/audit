@@ -78,6 +78,10 @@ services:
       AUDIT_OLLAMA_MODEL: ${AUDIT_OLLAMA_MODEL:-exaone4.0-1.2b}
       AUDIT_LLM_API_KEY: ${AUDIT_LLM_API_KEY:-${GROQ_API_KEY:-}}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
+      AUDIT_NVIDIA_API_KEY: ${AUDIT_NVIDIA_API_KEY:-${NVIDIA_API_KEY:-}}
+      AUDIT_NVIDIA_BASE_URL: ${AUDIT_NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      AUDIT_NVIDIA_MODEL: ${AUDIT_NVIDIA_MODEL:-nvidia/nemotron-3-ultra-550b-a55b}
+      AUDIT_LLM_REASONING: ${AUDIT_LLM_REASONING:-False}
     volumes:
       - media_data:/app/media
       - static_data:/app/static

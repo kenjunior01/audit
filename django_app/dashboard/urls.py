@@ -15,6 +15,7 @@ from .copilot_views import (copilot_chat, copilot_briefing, copilot_stream,
                             copilot_act)
 from .notification_views import (notifications_list, notifications_unread_count,
                                  notifications_mark_read)
+from .ai_llm_views import bi_narrate, llm_status, llm_test
 from .report_views import audit_report_summary_view, audit_report_pdf_view
 from .observability import metrics_view
 from .bi_views import (bi_measures, bi_measure_delete, bi_dimensions,
@@ -188,6 +189,9 @@ urlpatterns = [
     path('bi/alerts', bi_alerts, name='bi_alerts'),
     path('bi/alerts/run', bi_alerts_run, name='bi_alerts_run'),
     path('bi/alerts/<int:pk>', bi_alert_detail, name='bi_alert_detail'),
+    path('bi/narrate', bi_narrate, name='bi_narrate'),
+    path('ai/llm/status', llm_status, name='ai_llm_status'),
+    path('ai/llm/test', llm_test, name='ai_llm_test'),
 
     # Documentação OpenAPI 3
     path('schema', SpectacularAPIView.as_view(), name='schema'),
