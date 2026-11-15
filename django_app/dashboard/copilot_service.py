@@ -36,6 +36,7 @@ from django.utils import timezone
 
 from .models import (Alert, AuditCase, CopilotFeedback, ExcelImportJob,
                      RiskAgent, Transaction)
+from . import llm_client
 from .llm_client import LLM_API_KEY, openai_compatible_headers
 
 logger = logging.getLogger(__name__)
@@ -1479,10 +1480,11 @@ def ollama_available() -> bool:
 
 def call_ollama_copilot(question: str, tool_results: list,
                         history: list = None) -> dict:
-    """Pede síntese JSON ao Ollama. Devolve dict validado ou None.
-    Com sonda prévia: Ollama em cooldown de indisponibilidade → None
-    imediato (o pipeline segue em modo regras sem espera)."""
-    if not ollama_available():
+    """Pede síntese JSON ao motor LLM da cadeia (NVIDIA NIM → provider
+    primário). Devolve dict validado ou None.
+    Com sonda prévia: se nenhum motor responde, devolve None imediato
+    (o pipeline segue em modo regras sem espera)."""
+    if not ollama_available() and not llm_client.is_available():
         return None
     try:
         import requests
@@ -1495,36 +1497,12 @@ def call_ollama_copilot(question: str, tool_results: list,
                   + ("\nCONVERSA ANTERIOR:" + hist if hist else "")
                   + "\n\nPERGUNTA: " + question[:500]
                   + "\n\nJSON:")
-        if LLM_API_STYLE == "openai-compatible":
-            headers = openai_compatible_headers()
-            api_key = LLM_API_KEY
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
-            resp = requests.post(
-                f"{OLLAMA_URL.rstrip('/')}/chat/completions",
-                headers=headers,
-                json={
-                    "model": OLLAMA_MODEL,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.2,
-                    "max_tokens": 900,
-                },
-                timeout=OLLAMA_TIMEOUT,
-            )
-        else:
-            resp = requests.post(
-                f"{OLLAMA_URL.rstrip('/')}/api/generate",
-                json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False,
-                      "options": {"temperature": 0.2, "num_predict": 900}},
-                timeout=OLLAMA_TIMEOUT)
-        if resp.status_code != 200:
-            logger.info("copilot global LLM http %s", resp.status_code)
-            return None
-        if LLM_API_STYLE == "openai-compatible":
-            choices = resp.json().get("choices") or []
-            raw = choices[0].get("message", {}).get("content", "") if choices else ""
-        else:
-            raw = resp.json().get("response", "")
+        # Cadeia multi-provider (llm_client v2): NVIDIA NIM quando configurado,
+        # caindo para o provider primário (openai-compatible/ollama local).
+        # O reasoning_content (Nemotron thinking) já é descartado no cliente;
+        # o texto final volta a passar pelo _strip_think por segurança.
+        raw, _llm_meta = llm_client.generate_meta(
+            prompt, timeout=OLLAMA_TIMEOUT, temperature=0.2, max_tokens=900)
         raw = _strip_think(raw)
         start, end = raw.find("{"), raw.rfind("}")
         if start < 0 or end <= start:

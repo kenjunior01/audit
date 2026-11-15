@@ -84,6 +84,21 @@ const DICT: Record<string, [string, string]> = {
   'err.export': ['falha na exportação', 'export failed'],
   'err.qa': ['sem ligação ao Q&A', 'Q&A unavailable'],
   'err.evaluate': ['falha ao avaliar os alertas', 'failed to evaluate alerts'],
+  // --- motores de IA (LLM multi-provider) ---
+  'ai.engines_title': ['Motores de IA', 'AI engines'],
+  'ai.engines_sub': ['cadeia NVIDIA NIM → provider local', 'NVIDIA NIM → local provider chain'],
+  'ai.refresh': ['Atualizar', 'Refresh'],
+  'ai.test': ['Testar agora', 'Test now'],
+  'ai.online': ['online', 'online'],
+  'ai.none_available': [
+    'Nenhum motor de IA disponível — configure AUDIT_NVIDIA_API_KEY ou um Ollama local.',
+    'No AI engine available — set AUDIT_NVIDIA_API_KEY or a local Ollama.'],
+  'ai.test_ok': ['Teste OK:', 'Test OK:'],
+  'ai.test_fail': ['Teste falhou —', 'Test failed —'],
+  'studio.ai_summary': ['Resumo IA', 'AI summary'],
+  'studio.ai_thinking': ['A gerar interpretação IA…', 'Generating AI interpretation…'],
+  'studio.ai_unavailable': ['IA indisponível — resumo determinístico.', 'AI unavailable — deterministic summary.'],
+  'studio.ai_via': ['via', 'via'],
 }
 
 type LangCtxT = { lang: Lang, setLang: (l: Lang) => void, t: (k: string) => string }

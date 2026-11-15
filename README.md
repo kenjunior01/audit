@@ -221,6 +221,41 @@ tradução é feita pelo dicionário plano em `frontend/src/lib/i18n.tsx`
 perguntas de exemplo do Q&A continuam em PT porque o motor determinístico
 `/bi/qa` interpreta português; BI Studio (`/bi`) mantém-se em PT na v1.
 
+### Motores de IA — LLM multi-provider (NVIDIA NIM → local)
+
+O cliente LLM da plataforma (`dashboard/llm_client.py`) é uma **cadeia de
+motores com fallback automático**: quando um motor falha (rede, auth, modelo
+indisponível), o seguinte assume — sem qualquer configuração extra.
+
+| Prioridade | Motor | Configuração |
+|---|---|---|
+| 1 | **NVIDIA NIM** (Nemotron e catálogo NVIDIA, OpenAI-compatible) | `AUDIT_NVIDIA_API_KEY` (ou `NVIDIA_API_KEY`), `AUDIT_NVIDIA_MODEL` (default `nvidia/nemotron-3-ultra-550b-a55b`) |
+| 2 | **OpenAI-compatible** (Groq/EXAONE/vLLM) | `AUDIT_LLM_API_STYLE=openai-compatible` + `AUDIT_LLM_BASE_URL` + `AUDIT_OLLAMA_MODEL` + `AUDIT_LLM_API_KEY` |
+| 2 | **Ollama local** | `AUDIT_LLM_API_STYLE=ollama` + `OLLAMA_URL` |
+
+Funcionalidades:
+- **Reasoning do Nemotron** (`AUDIT_LLM_REASONING=true` →
+  `chat_template_kwargs.enable_thinking`): o raciocínio (`reasoning_content`
+  e blocos `<think>`) é descartado automaticamente — só a resposta final
+  chega aos utilizadores.
+- **Streaming SSE** (`llm_client.generate_stream`) e **geração com metadados**
+  (`generate_meta` → provider/modelo/latência por resposta).
+- **Toda a IA da plataforma usa a cadeia**: Copiloto Global (chat agéntico),
+  Copiloto Excel, serviços de análise AI, digest de alertas e narração BI.
+- **Painel "Motores de IA"** em Integrações (`GET /ai/llm/status`): disponibilidade
+  ao vivo de cada motor, chave configurada, reasoning, prioridade — com
+  **"Testar agora"** (`POST /ai/llm/test`, auditor/admin) que faz um ping real
+  e devolve provider, modelo e latência.
+- **Resumo IA no Painel Auto** (`POST /bi/narrate`): transforma KPIs e sinais
+  num parágrafo executivo em PT gerado pelo motor disponível; sem motor
+  disponível, devolve resumo determinístico (nunca derruba o painel).
+
+### Segurança de chaves
+
+As chaves (`AUDIT_NVIDIA_API_KEY`, `AUDIT_LLM_API_KEY`, …) vivem apenas em
+variáveis de ambiente / `.env` (ignorado pelo git) — **nunca** em ficheiros
+versionados. `.env.example` traz os placeholders.
+
 ---
 
 ## Arranque rápido
