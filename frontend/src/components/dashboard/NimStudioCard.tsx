@@ -2,9 +2,9 @@
 // NIM Studio — geração de imagens (FLUX.2-klein-4B), galeria e compreensão
 // de imagem/vídeo (Nemotron omni). Usa /ai/nim/* com as credenciais da BD.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { apiFetch, apiDownload } from '@/lib/api'
+import { apiFetch, apiDownload, getUserRole } from '@/lib/api'
 import { useLang } from '@/lib/i18n'
-import { ImageIcon, Wand2, Eye, Loader2, Download, RefreshCw, Film, Play } from 'lucide-react'
+import { ImageIcon, Wand2, Eye, Loader2, Download, RefreshCw, Film, Play, Search, Trash2, FolderOpen, Images } from 'lucide-react'
 
 type GalleryItem = {
   id: number, prompt: string, width: number, height: number, steps: number,
@@ -17,6 +17,18 @@ type ImageRes = {
   file_url: string,
 }
 type VisionRes = { answer: string, model: string, media_type: string, latency_ms: number, source: string }
+type BankProvider = { id: string, label: string, needs_key: boolean, configured: boolean, masked: string }
+type BankResult = {
+  provider: string, image_id: string, title: string, author: string,
+  license: string, license_url: string, landing_url: string, url: string,
+  thumb_url: string, width: number | null, height: number | null,
+}
+type BankSaved = {
+  id: number, provider: string, provider_image_id: string, title: string,
+  author: string, license: string, license_url: string, landing_url: string,
+  width: number | null, height: number | null, created_at: string,
+  thumb_url: string, file_url: string,
+}
 
 // fetch autenticado do JPEG da galeria → objectURL (img não envia Bearer)
 function useThumb(fileUrl: string | null) {
@@ -64,6 +76,75 @@ function GalleryTile({ item, onDownload }: { item: GalleryItem, onDownload: (it:
   )
 }
 
+// Tile de resultado da busca (thumb por hotspot externo — sem auth)
+function BankResultTile({ item, onSave, saving, savedIds }: { item: BankResult, onSave: (it: BankResult) => void, saving: boolean, savedIds: Set<string> }) {
+  const { t } = useLang()
+  const [broken, setBroken] = useState(false)
+  const isSaved = savedIds.has(`${item.provider}:${item.image_id}`)
+  return (
+    <div className="rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden bg-slate-50 dark:bg-slate-800/50 group relative">
+      {!broken && item.thumb_url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={item.thumb_url} alt={item.title.slice(0, 60)} referrerPolicy="no-referrer" loading="lazy" onError={() => setBroken(true)}
+          className="w-full aspect-square object-cover" />
+      ) : (
+        <div className="w-full aspect-square flex items-center justify-center text-slate-300 dark:text-slate-600">
+          <ImageIcon className="w-5 h-5" />
+        </div>
+      )}
+      <button onClick={() => onSave(item)} disabled={saving || isSaved}
+        className="absolute top-2 right-2 bg-white/90 dark:bg-slate-900/90 rounded-lg p-1.5 shadow"
+        title={isSaved ? t('bank.saved_title') : t('bank.save')}>
+        {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          : isSaved ? <FolderOpen className="w-3.5 h-3.5 text-emerald-600" />
+          : <Download className="w-3.5 h-3.5 text-slate-600 dark:text-slate-300" />}
+      </button>
+      <div className="p-2">
+        <p className="text-[11px] text-slate-600 dark:text-slate-300 line-clamp-2">{item.title || item.image_id}</p>
+        <p className="text-[10px] text-slate-400 mt-0.5 truncate">{item.author || '—'}{item.license ? ` · ${item.license}` : ''}</p>
+        {item.landing_url && (
+          <a href={item.landing_url} target="_blank" rel="noreferrer"
+            className="text-[10px] text-blue-500 hover:underline">{t('bank.license')} ↗</a>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Tile da galeria guardada (thumb servido pela API, com auth)
+function BankSavedTile({ item, onDelete, deleting }: { item: BankSaved, onDelete?: (it: BankSaved) => void, deleting: boolean }) {
+  const { t } = useLang()
+  const thumb = useThumb(item.thumb_url)
+  return (
+    <div className="rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden bg-slate-50 dark:bg-slate-800/50 group relative">
+      {thumb ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={thumb} alt={item.title.slice(0, 60)} className="w-full aspect-square object-cover" />
+      ) : (
+        <div className="w-full aspect-square flex items-center justify-center text-slate-300 dark:text-slate-600">
+          <Loader2 className="w-5 h-5 animate-spin" />
+        </div>
+      )}
+      <div className="absolute top-2 right-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+        <button onClick={() => apiDownload(item.file_url, `bank_${item.id}.jpg`).catch(() => {})}
+          className="bg-white/90 dark:bg-slate-900/90 rounded-lg p-1.5 shadow" title={t('nim.download')}>
+          <Download className="w-3.5 h-3.5 text-slate-600 dark:text-slate-300" />
+        </button>
+        {onDelete && (
+          <button onClick={() => onDelete(item)} disabled={deleting}
+            className="bg-white/90 dark:bg-slate-900/90 rounded-lg p-1.5 shadow" title={t('bank.delete')}>
+            {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin text-red-500" /> : <Trash2 className="w-3.5 h-3.5 text-red-500" />}
+          </button>
+        )}
+      </div>
+      <div className="p-2">
+        <p className="text-[11px] text-slate-600 dark:text-slate-300 line-clamp-2">{item.title || item.provider}</p>
+        <p className="text-[10px] text-slate-400 mt-0.5">{item.provider} · {item.license || '—'} · {item.created_at}</p>
+      </div>
+    </div>
+  )
+}
+
 export function NimStudioCard() {
   const { t } = useLang()
   // --- geração de imagens ---
@@ -84,6 +165,19 @@ export function NimStudioCard() {
   const [vBusy, setVBusy] = useState(false)
   const [vRes, setVRes] = useState<VisionRes | null>(null)
   const [vError, setVError] = useState('')
+  // --- banco de imagens ---
+  const [bankProviders, setBankProviders] = useState<BankProvider[]>([])
+  const [bankProvider, setBankProvider] = useState('met')
+  const [bankQuery, setBankQuery] = useState('')
+  const [bankResults, setBankResults] = useState<BankResult[]>([])
+  const [bankCount, setBankCount] = useState<number | null>(null)
+  const [bankBusy, setBankBusy] = useState(false)
+  const [bankError, setBankError] = useState('')
+  const [bankSearchDone, setBankSearchDone] = useState(false)
+  const [bankSaved, setBankSaved] = useState<BankSaved[]>([])
+  const [bankSaveBusyId, setBankSaveBusyId] = useState('')
+  const [bankDeleteBusyId, setBankDeleteBusyId] = useState('')
+  const canEditBank = getUserRole() === 'auditor' || getUserRole() === 'admin'
   const resultRef = useRef<HTMLDivElement | null>(null)
 
   const loadGallery = useCallback(async () => {
@@ -98,6 +192,73 @@ export function NimStudioCard() {
     finally { setGalBusy(false) }
   }, [])
   useEffect(() => { loadGallery() /* eslint-disable-line react-hooks/exhaustive-deps */ }, [loadGallery])
+
+  const loadBankProviders = useCallback(async () => {
+    try {
+      const r = await apiFetch('/ai/bank/providers')
+      if (r.ok) {
+        const d = await r.json()
+        setBankProviders(d.providers || [])
+      }
+    } catch { /* informativo */ }
+  }, [])
+  const loadBankSaved = useCallback(async () => {
+    try {
+      const r = await apiFetch('/ai/bank/images?limit=8')
+      if (r.ok) {
+        const d = await r.json()
+        setBankSaved(d.images || [])
+      }
+    } catch { /* informativo */ }
+  }, [])
+  useEffect(() => { loadBankProviders() /* eslint-disable-line react-hooks/exhaustive-deps */ }, [loadBankProviders])
+  useEffect(() => { loadBankSaved() /* eslint-disable-line react-hooks/exhaustive-deps */ }, [loadBankSaved])
+
+  async function bankSearch() {
+    setBankError('')
+    if (!bankQuery.trim()) { setBankError(`${t('bank.err')} ${t('bank.query')}`); return }
+    setBankBusy(true); setBankResults([]); setBankSearchDone(false)
+    try {
+      const r = await apiFetch(`/ai/bank/search?q=${encodeURIComponent(bankQuery.trim())}&provider=${encodeURIComponent(bankProvider)}`)
+      const d = await r.json()
+      if (!r.ok) setBankError(d?.error || `${t('bank.err')} ${r.status}`)
+      else { setBankResults(d.results || []); setBankCount(d.result_count ?? null); setBankSearchDone(true) }
+    } catch { setBankError(t('bank.err')) }
+    finally { setBankBusy(false) }
+  }
+
+  async function bankSave(item: BankResult) {
+    setBankError(''); setBankSaveBusyId(`${item.provider}:${item.image_id}`)
+    try {
+      const r = await apiFetch('/ai/bank/save', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: item.provider, image_id: item.image_id,
+          title: item.title, author: item.author, license: item.license,
+          license_url: item.license_url, landing_url: item.landing_url,
+          source_url: item.url, thumb_url: item.thumb_url,
+          width: item.width, height: item.height,
+          query: bankQuery.trim().slice(0, 300),
+        })
+      })
+      const d = await r.json()
+      if (!r.ok) setBankError(d?.error || `${t('bank.err')} ${r.status}`)
+      else loadBankSaved()
+    } catch { setBankError(t('bank.err')) }
+    finally { setBankSaveBusyId('') }
+  }
+
+  async function bankDelete(item: BankSaved) {
+    if (!window.confirm(`${t('bank.delete')}?`)) return
+    setBankDeleteBusyId(String(item.id))
+    try {
+      const r = await apiFetch(`/ai/bank/images/${item.id}`, { method: 'DELETE' })
+      if (r.ok) setBankSaved(xs => xs.filter(x => x.id !== item.id))
+    } catch { /* silencioso */ }
+    finally { setBankDeleteBusyId('') }
+  }
+
+  const bankSavedIds = new Set(bankSaved.map(s => `${s.provider}:${s.provider_image_id}`))
 
   async function generate() {
     setError('')
@@ -239,6 +400,66 @@ export function NimStudioCard() {
             {gallery.map(it => <GalleryTile key={it.id} item={it} onDownload={downloadGallery} />)}
           </div>
         )}
+      </div>
+
+      {/* Banco de Imagens — busca real estilo Freepik */}
+      <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+        <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+          <Images className="w-4 h-4 text-violet-600" />
+          <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">{t('bank.title')}</p>
+          <span className="text-[11px] text-slate-400">{t('bank.subtitle')}</span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-[2fr_1.2fr_auto] gap-2">
+          <input value={bankQuery} onChange={e => setBankQuery(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') bankSearch() }}
+            placeholder={t('bank.query_ph')}
+            className="px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-violet-500 outline-none" />
+          <select value={bankProvider} onChange={e => setBankProvider(e.target.value)}
+            className="px-2 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200">
+            {(bankProviders.length ? bankProviders : [{ id: 'openverse', label: 'Openverse (CC, sem chave)', needs_key: false, configured: true, masked: '' }]).map(p => (
+              <option key={p.id} value={p.id} disabled={!p.configured}>
+                {p.label}{p.needs_key && !p.configured ? ` — ${t('bank.need_key')}` : ''}
+              </option>
+            ))}
+          </select>
+          <button onClick={bankSearch} disabled={bankBusy}
+            className="px-4 py-2 rounded-lg text-xs font-semibold bg-violet-600 hover:bg-violet-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50 transition-colors">
+            {bankBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+            {bankBusy ? t('bank.searching') : t('bank.search')}
+          </button>
+        </div>
+        {bankError && <p className="text-xs text-red-500 mt-2">{bankError}</p>}
+        {bankSearchDone && (
+          <div className="mt-3">
+            <p className="text-[11px] text-slate-400 mb-1.5">{t('bank.results')}{bankCount !== null ? ` · ${bankCount}` : ''}</p>
+            {bankResults.length === 0 ? (
+              <p className="text-xs text-slate-400">{t('bank.results_empty')}</p>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+                {bankResults.map(r => (
+                  <BankResultTile key={`${r.provider}:${r.image_id}`} item={r}
+                    onSave={bankSave}
+                    saving={bankSaveBusyId === `${r.provider}:${r.image_id}`}
+                    savedIds={bankSavedIds} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        <div className="mt-3">
+          <p className="text-[11px] text-slate-400 mb-1.5">{t('bank.saved_title')}</p>
+          {bankSaved.length === 0 ? (
+            <p className="text-xs text-slate-400">{t('bank.saved_empty')}</p>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+              {bankSaved.map(s => (
+                <BankSavedTile key={s.id} item={s}
+                  onDelete={canEditBank ? bankDelete : undefined}
+                  deleting={bankDeleteBusyId === String(s.id)} />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Visão (imagem/vídeo) */}

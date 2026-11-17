@@ -735,8 +735,12 @@ class AiCredential(models.Model):
     Fernet (prefixo 'enc:v1:'). Permite gerir as chaves NVIDIA NIM pelo
     painel/API sem reiniciar o serviço — env é o fallback."""
 
-    SLOT_CHOICES = (('text', 'Texto (Nemotron)'), ('vision', 'Visão (omni)'),
-                    ('image', 'Imagem (FLUX.2)'))
+    SLOT_CHOICES = (
+        ('text', 'Texto (Nemotron)'), ('vision', 'Visão (omni)'),
+        ('image', 'Imagem (FLUX.2)'),
+        # bancos de imagens (opcional — chaves próprias do utilizador)
+        ('pexels', 'Banco: Pexels'), ('unsplash', 'Banco: Unsplash'),
+        ('pixabay', 'Banco: Pixabay'), ('freepik', 'Banco: Freepik'))
 
     slot = models.CharField(max_length=20, unique=True, choices=SLOT_CHOICES)
     api_key = models.TextField(blank=True, default='')  # cifrado enc:v1:…
@@ -770,3 +774,36 @@ class NimImage(models.Model):
 
     def __str__(self):
         return f"NIM #{self.pk}: {self.prompt[:40]}…"
+
+
+class StockImage(models.Model):
+    """Imagem guardada do banco de imagens (Openverse/Wikimedia/Pexels/
+    Unsplash/Pixabay/Freepik) — galeria unificada do NIM Studio e capa de
+    relatórios. Ficheiro descarregado para a BD/media pelo servidor."""
+
+    provider = models.CharField(max_length=32)
+    provider_image_id = models.CharField(max_length=128)
+    query = models.CharField(max_length=300, blank=True, default='')
+    title = models.CharField(max_length=300, blank=True, default='')
+    author = models.CharField(max_length=200, blank=True, default='')
+    license = models.CharField(max_length=64, blank=True, default='')
+    license_url = models.CharField(max_length=300, blank=True, default='')
+    landing_url = models.CharField(max_length=500, blank=True, default='')
+    source_url = models.TextField(blank=True, default='')  # URL original remoto
+    width = models.PositiveIntegerField(null=True, blank=True)
+    height = models.PositiveIntegerField(null=True, blank=True)
+    file = models.FileField(upload_to='bank_images/%Y/%m/', max_length=500)
+    thumb = models.FileField(upload_to='bank_images/thumbs/%Y/%m/',
+                             max_length=500, blank=True)
+    file_size = models.PositiveIntegerField(null=True, blank=True)
+    created_by = models.CharField(max_length=128, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [models.UniqueConstraint(
+            fields=['provider', 'provider_image_id'],
+            name='unique_stockimage_provider_id')]
+
+    def __str__(self):
+        return f"Stock #{self.pk}: {self.title[:40]}… ({self.provider})"

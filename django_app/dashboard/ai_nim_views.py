@@ -22,7 +22,7 @@ from rest_framework.response import Response
 
 from . import ai_credentials, llm_client, nvidia_client
 from .auth import IsAuditorOrAdmin, IsViewerOrAbove
-from .models import NimImage
+from .models import NimImage, StockImage
 
 logger = logging.getLogger(__name__)
 
@@ -285,7 +285,9 @@ def nim_report_cover(request):
 
 
 def cover_image_bytes(cover_id):
-    """Bytes JPEG da capa da galeria para embutir no PDF (None se falhar)."""
+    """Bytes JPEG/PNG da capa para embutir no PDF (None se falhar).
+    Aceita id da galeria NIM (FLUX) ou do banco de imagens (StockImage) —
+    primeiro procura NimImage, depois StockImage."""
     if not cover_id:
         return None
     try:
@@ -293,4 +295,10 @@ def cover_image_bytes(cover_id):
         fh = record.image.open("rb")
         return fh.read()
     except (NimImage.DoesNotExist, ValueError, FileNotFoundError):
+        pass
+    try:
+        record = StockImage.objects.get(pk=cover_id)
+        fh = record.file.open("rb")
+        return fh.read()
+    except (StockImage.DoesNotExist, ValueError, FileNotFoundError):
         return None

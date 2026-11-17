@@ -5,10 +5,13 @@ import { apiFetch, getUserRole } from '@/lib/api'
 import { useLang } from '@/lib/i18n'
 import { X, Save, Brain, Zap, Shield, Activity, KeyRound } from 'lucide-react'
 
-// Credenciais NVIDIA NIM por slot (texto/visão/imagem) — encriptadas na BD.
+// Credenciais NVIDIA NIM + bancos de imagens por slot — encriptadas na BD.
 type CredSlots = Record<string, { label: string, configured: boolean, masked: string, model: string, source: string }>
-type SlotKey = 'text' | 'vision' | 'image'
+type SlotKey = 'text' | 'vision' | 'image' | 'pexels' | 'unsplash' | 'pixabay' | 'freepik'
 const SLOTS: SlotKey[] = ['text', 'vision', 'image']
+const BANK_SLOTS: SlotKey[] = ['pexels', 'unsplash', 'pixabay', 'freepik']
+const ALL_SLOTS: SlotKey[] = [...SLOTS, ...BANK_SLOTS]
+const EMPTY_INPUTS: Record<SlotKey, string> = { text: '', vision: '', image: '', pexels: '', unsplash: '', pixabay: '', freepik: '' }
 
 export default function AISettingsModal({ isOpen, onClose, onSave }: { isOpen?: boolean, onClose: () => void, onSave?: () => void }) {
   const { t } = useLang()
@@ -18,8 +21,8 @@ export default function AISettingsModal({ isOpen, onClose, onSave }: { isOpen?: 
 
   // credenciais NIM na BD
   const [creds, setCreds] = useState<CredSlots | null>(null)
-  const [keyInputs, setKeyInputs] = useState<Record<SlotKey, string>>({ text: '', vision: '', image: '' })
-  const [modelInputs, setModelInputs] = useState<Record<SlotKey, string>>({ text: '', vision: '', image: '' })
+  const [keyInputs, setKeyInputs] = useState<Record<SlotKey, string>>(EMPTY_INPUTS)
+  const [modelInputs, setModelInputs] = useState<Record<SlotKey, string>>(EMPTY_INPUTS)
   const [dirty, setDirty] = useState<Set<SlotKey>>(new Set())
   const [credsMsg, setCredsMsg] = useState('')
 
@@ -49,7 +52,7 @@ export default function AISettingsModal({ isOpen, onClose, onSave }: { isOpen?: 
   const saveCredentials = async () => {
     setCredsMsg('')
     const body: Record<string, string> = {}
-    for (const slot of SLOTS) {
+    for (const slot of ALL_SLOTS) {
       if (!dirty.has(slot)) continue
       body[`${slot}_key`] = (keyInputs[slot] || '').trim()
       const m = (modelInputs[slot] || '').trim()
@@ -70,8 +73,8 @@ export default function AISettingsModal({ isOpen, onClose, onSave }: { isOpen?: 
       else if (r.ok) {
         const d = await r.json()
         if (d?.slots) setCreds(d.slots as CredSlots)
-        setKeyInputs({ text: '', vision: '', image: '' })
-        setModelInputs({ text: '', vision: '', image: '' })
+        setKeyInputs(EMPTY_INPUTS)
+        setModelInputs(EMPTY_INPUTS)
         setDirty(new Set())
         setCredsMsg(t('nim.creds_ok'))
       } else { setCredsMsg(`${t('nim.err')} ${r.status}`) }
@@ -112,7 +115,7 @@ export default function AISettingsModal({ isOpen, onClose, onSave }: { isOpen?: 
     return <span className="px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-[10px]">{t('nim.src_env')}</span>
   }
 
-  const credRow = (slot: SlotKey, label: string) => {
+  const credRow = (slot: SlotKey, label: string, withModel = true) => {
     const s = creds?.[slot]
     return (
       <div key={slot} className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-2">
@@ -132,15 +135,17 @@ export default function AISettingsModal({ isOpen, onClose, onSave }: { isOpen?: 
           autoComplete="off"
           className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-purple-500 outline-none disabled:opacity-60"
         />
-        <input
-          type="text"
-          placeholder={`${t('nim.model')} · ${s?.model || t('nim.model_default')}`}
-          value={modelInputs[slot]}
-          onChange={e => markDirty(slot, 'model', e.target.value)}
-          disabled={!canEditCreds}
-          autoComplete="off"
-          className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-purple-500 outline-none disabled:opacity-60 font-mono"
-        />
+        {withModel && (
+          <input
+            type="text"
+            placeholder={`${t('nim.model')} · ${s?.model || t('nim.model_default')}`}
+            value={modelInputs[slot]}
+            onChange={e => markDirty(slot, 'model', e.target.value)}
+            disabled={!canEditCreds}
+            autoComplete="off"
+            className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-purple-500 outline-none disabled:opacity-60 font-mono"
+          />
+        )}
       </div>
     )
   }
@@ -207,6 +212,29 @@ export default function AISettingsModal({ isOpen, onClose, onSave }: { isOpen?: 
               <span className={`text-xs ${credsMsg === t('nim.creds_ok') ? 'text-emerald-600' : 'text-red-500'}`}>{credsMsg}</span>
               <button onClick={saveCredentials} disabled={saving || !canEditCreds}
                 className="px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-600 hover:bg-purple-700 text-white flex items-center gap-1.5 disabled:opacity-50 transition-colors">
+                {saving ? t('nim.creds_saving') : (<><Save className="w-3.5 h-3.5" />{t('nim.creds_save')}</>)}
+              </button>
+            </div>
+          </div>
+
+          <hr className="border-slate-100 dark:border-slate-800" />
+
+          {/* Chaves dos bancos de imagens (opcional) */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <KeyRound className="w-4 h-4 text-violet-500" />
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                {t('nim.creds_banks_title')}
+              </label>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400">{t('bank.key_hint')}</p>
+            {credRow('pexels', t('nim.slot_pexels'), false)}
+            {credRow('unsplash', t('nim.slot_unsplash'), false)}
+            {credRow('pixabay', t('nim.slot_pixabay'), false)}
+            {credRow('freepik', t('nim.slot_freepik'), false)}
+            <div className="flex items-center justify-end">
+              <button onClick={saveCredentials} disabled={saving || !canEditCreds}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white flex items-center gap-1.5 disabled:opacity-50 transition-colors">
                 {saving ? t('nim.creds_saving') : (<><Save className="w-3.5 h-3.5" />{t('nim.creds_save')}</>)}
               </button>
             </div>

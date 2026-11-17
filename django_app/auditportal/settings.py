@@ -60,26 +60,49 @@ DATABASES = {
     }
 }
 
-# PostgreSQL opcional (recomendado em produção). Exemplo:
-#   AUDIT_DATABASE_URL=postgres://user:pass@localhost:5432/audit
+# Base de dados real via URL — AUDIT_DATABASE_URL. Exemplos:
+#   postgres://user:pass@localhost:5432/audit                  (TCP)
+#   postgresql://postgres@/audit?host=/caminho/do/socket       (socket unix, pgserver embutido)
+#   postgresql://user:pass@db.xxxx.supabase.co:5432/postgres?sslmode=require
+#   postgresql://user:pass@ep-xxx.neon.tech/neondb?sslmode=require
+# Parse com urllib (não regex) para suportar query params, passwords
+# url-encoded e host vazio (socket unix).
 _db_url = os.environ.get('AUDIT_DATABASE_URL')
 if _db_url:
-    import re as _re
-    _m = _re.match(
-        r'(?P<engine>\w+)://(?P<user>[^:]*):(?P<pass>[^@]*)@(?P<host>[^:/]*)(?::(?P<port>\d+))?/(?P<name>.+)',
-        _db_url)
-    if _m:
-        _engines = {'postgres': 'django.db.backends.postgresql', 'postgresql': 'django.db.backends.postgresql',
-                    'mysql': 'django.db.backends.mysql', 'sqlite': 'django.db.backends.sqlite3'}
-        DATABASES = {'default': {
-            'ENGINE': _engines.get(_m.group('engine'), 'django.db.backends.postgresql'),
-            'NAME': _m.group('name'),
-            'USER': _m.group('user') or None,
-            'PASSWORD': _m.group('pass') or '',
-            'HOST': _m.group('host'),
-            'PORT': _m.group('port') or '',
-            'CONN_MAX_AGE': 60,
-        }}
+    try:
+        from urllib.parse import urlsplit, parse_qsl, unquote as _unquote
+        _u = urlsplit(_db_url)
+        _q = dict(parse_qsl(_u.query))
+        _scheme = _u.scheme.split('+')[0]  # postgres+psycopg2 → postgres
+        if _scheme == 'sqlite':
+            DATABASES = {'default': {
+                'ENGINE': 'django.db.backends.sqlite3',
+                'NAME': _unquote(_u.path.lstrip('/')) or _q.get('dbname', ''),
+            }}
+        elif _scheme in ('postgres', 'postgresql', 'mysql'):
+            _default_port = {'postgres': 5432, 'postgresql': 5432, 'mysql': 3306}
+            _cfg = {
+                'ENGINE': ('django.db.backends.postgresql'
+                           if _scheme != 'mysql' else 'django.db.backends.mysql'),
+                'NAME': _unquote(_u.path.lstrip('/')) or _q.get('dbname', ''),
+                'USER': _unquote(_u.username) if _u.username else '',
+                'PASSWORD': _unquote(_u.password) if _u.password else '',
+                # host no query (socket unix, ex.: ?host=/caminho) tem prioridade
+                'HOST': _q.get('host') or _unquote(_u.hostname or ''),
+                'PORT': _q.get('port') or str(_u.port or _default_port[_scheme]),
+                'CONN_MAX_AGE': 60,
+            }
+            _opts = {k: v for k, v in _q.items()
+                     if k in ('sslmode', 'sslrootcert', 'connect_timeout')}
+            if _opts:
+                _cfg['OPTIONS'] = _opts
+            if not _cfg['NAME']:
+                raise ValueError('AUDIT_DATABASE_URL sem nome de base de dados')
+            DATABASES = {'default': _cfg}
+    except Exception as _e:  # URL inválida → mantém SQLite e não impede o boot
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            'AUDIT_DATABASE_URL inválida (%s) — a usar SQLite', _e)
 
 AUTH_PASSWORD_VALIDATORS = [
     {
