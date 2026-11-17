@@ -27,6 +27,11 @@ RESTORE_TEST_DB = "audit_restore_test"
 MIN_ITEMS = 40   # entradas no catálogo do dump (tabelas+dados+índices)
 MIN_TABLES = 40  # tabelas após restauro de verificação
 
+try:  # PostgreSQL embutido opcional (ausente em CI/alguns deploys)
+    import pgserver
+except ImportError:  # pragma: no cover
+    pgserver = None
+
 
 class BackupError(RuntimeError):
     """Falha fatal de backup (dump ilegível, restauro incompleto, etc.)."""
@@ -34,22 +39,21 @@ class BackupError(RuntimeError):
 
 def pg_bin(name):
     """Binário pg_dump/pg_restore do pgserver (auto-contido) ou do PATH."""
-    try:
-        import pgserver
-        p = os.path.join(os.path.dirname(pgserver.__file__), "pginstall",
-                         "bin", name)
+    root = getattr(pgserver, "__file__", None) if pgserver is not None else None
+    if root:
+        p = os.path.join(os.path.dirname(root), "pginstall", "bin", name)
         if os.path.exists(p):
             return p
-    except ImportError:
-        pass
     return name
 
 
 def _start_pgserver(pgdata):
     """Arranca (idempotente) o PostgreSQL embutido e devolve (handle, uri).
     Cria a base 'audit' apenas se ainda não existe (sem ruído de stderr)."""
+    if pgserver is None:
+        raise BackupError("pgserver indisponível (PostgreSQL embutido não "
+                          "instalado neste ambiente)")
     import psycopg
-    import pgserver
     os.makedirs(pgdata, exist_ok=True)
     db = pgserver.get_server(pgdata, cleanup_mode=None)
     uri = db.get_uri(DEFAULT_DB)
@@ -103,8 +107,8 @@ def prune(backup_dir, keep=DEFAULT_KEEP, prefix="audit-"):
 def _restore_verify(dump, pgdata):
     """Restaura o dump numa base temporária local e conta tabelas."""
     import psycopg
-    db, uri = _start_pgserver(pgdata)
     try:
+        db, uri = _start_pgserver(pgdata)
         db.psql(f"DROP DATABASE IF EXISTS {RESTORE_TEST_DB}")
         db.psql(f"CREATE DATABASE {RESTORE_TEST_DB}")
         rr = subprocess.run(

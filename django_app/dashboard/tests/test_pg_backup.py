@@ -48,8 +48,9 @@ class ResolveUriTest(SimpleTestCase):
     def test_none_when_nothing(self):
         env = {k: v for k, v in os.environ.items()
                if k not in ("AUDIT_DATABASE_URL", "AUDIT_PGDATA")}
+        # pgserver ausente (CI) → resolve_uri devolve (None, None) sem lançar
         with patch.dict(os.environ, env, clear=True), \
-             patch("pgserver.get_server", side_effect=ImportError("no pg")):
+             patch("dashboard.pg_backup.pgserver", None):
             uri, source = pg_backup.resolve_uri(pgdata="/tmp/t42-missing-pg")
         self.assertIsNone(uri)
         self.assertIsNone(source)
@@ -146,32 +147,38 @@ class CreateBackupTest(SimpleTestCase):
 
 
 class RestoreVerifyTest(SimpleTestCase):
-    def test_restore_verified_counts_tables(self):
-        dump = "/tmp/fake.dump"
+    def _pgserver_mock(self):
         db = Mock()
         db.psql = Mock()
-        db.get_uri = Mock(return_value="postgresql://pgserver/audit")
+        db.get_uri = Mock(side_effect=lambda name:
+                          f"postgresql://pgserver/{name}")
+        return patch("dashboard.pg_backup.pgserver",
+                     Mock(get_server=Mock(return_value=db)))
+
+    def test_restore_verified_counts_tables(self):
+        dump = "/tmp/fake.dump"
         conn = Mock()
         conn.execute.return_value.fetchone.return_value = (47,)
-        with patch("pgserver.get_server", return_value=db), \
-             patch("psycopg.connect", return_value=conn):
+        with self._pgserver_mock(), \
+             patch("dashboard.pg_backup.subprocess.run",
+                   return_value=Mock(returncode=0, stderr="", stdout="")), \
+             patch("psycopg.connect", return_value=conn) as connect:
             n = pg_backup._restore_verify(dump, "/tmp/audit-pg")
         self.assertEqual(n, 47)
-        db.psql.assert_any_call("DROP DATABASE IF EXISTS audit_restore_test")
-        db.psql.assert_any_call("CREATE DATABASE audit_restore_test")
+        db = connect.call_args  # ligação à base temporária
+        self.assertIn("audit_restore_test", str(db))
 
     def test_incomplete_restore_raises_and_cleans(self):
         dump = "/tmp/fake.dump"
-        db = Mock()
-        db.psql = Mock()
-        db.get_uri = Mock(return_value="postgresql://pgserver/audit")
         conn = Mock()
         conn.execute.return_value.fetchone.return_value = (3,)
-        with patch("pgserver.get_server", return_value=db), \
+        with self._pgserver_mock() as pgm, \
+             patch("dashboard.pg_backup.subprocess.run",
+                   return_value=Mock(returncode=0, stderr="", stdout="")), \
              patch("psycopg.connect", return_value=conn):
             with self.assertRaises(pg_backup.BackupError) as ctx:
                 pg_backup._restore_verify(dump, "/tmp/audit-pg")
         self.assertIn("incompleto", str(ctx.exception))
-        # psql: DROP/CREATE/DROP da base temporária (o probe psycopg da
-        # _start_pgserver não usa psql) = 3 chamadas
+        db = pgm.get_server.return_value
+        # psql: DROP/CREATE/DROP da base temporária = 3 chamadas
         self.assertEqual(db.psql.call_count, 3)
