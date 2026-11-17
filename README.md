@@ -250,11 +250,44 @@ Funcionalidades:
   num parágrafo executivo em PT gerado pelo motor disponível; sem motor
   disponível, devolve resumo determinístico (nunca derruba o painel).
 
+### NIM Studio — Imagens (FLUX.2-klein-4B) e Visão (omni) + credenciais na BD (novo)
+
+Além do motor de texto, a plataforma integra agora os motores **multimodais**
+do catálogo NVIDIA NIM, geridos no painel **Integrações** (cartão
+“NIM Studio — Imagens & Visão”):
+
+- **Geração de imagens** — FLUX.2-klein-4B (`POST /ai/nim/image`): prompt,
+  tamanho (256–1024, múltiplos de 16), passos (1–8) e seed opcional. Cada
+  imagem é guardada na **galeria** (modelo `NimImage`) e servida por
+  `GET /ai/nim/images` + `GET /ai/nim/images/<id>/file` (download autenticado).
+- **Compreensão de imagem e vídeo** — Nemotron-3-nano-omni-30b-a3b-reasoning
+  (`POST /ai/nim/vision`): URL de imagem **ou vídeo** (auto-detetado pela
+  extensão — mp4/webm/mov/mkv/avi), pergunta opcional; o raciocínio
+  (`reasoning_content`) é descartado — só a resposta final regressa.
+- **Credenciais encriptadas na base de dados** (`dashboard/ai_credentials.py`,
+  modelo `AiCredential`): cada slot (`text` / `vision` / `image`) guarda a
+  chave cifrada com **Fernet** (prefixo `enc:v1:`, derivação
+  `sha256(AUDIT_DJANGO_SECRET_KEY)`), mais modelo e base_url personalizáveis —
+  **sem reiniciar o serviço**. Resolução: BD → env → constantes de módulo.
+  - `GET /ai/nim/credentials` (viewer+): resumo **mascarado** (`nvapi-…XXXX`) —
+    a chave completa nunca sai do servidor.
+  - `POST /ai/nim/credentials` (auditor/admin): grava/limpa por slot
+    (`{"image_key": "nvapi-…", "image_model": "…"}`; `""` limpa → fallback env).
+  - Secção “Credenciais NVIDIA NIM (BD)” no modal AI Control Plane
+    (Configurações) com badges BD/Ambiente.
+  - Seed: `python manage.py seed_nim_credentials` (env → BD encriptada;
+    `--clear` limpa a BD).
+- `GET /ai/nim/status` (viewer+): estado dos 3 slots + motores (fonte da
+  credencial, modelo, disponibilidade).
+
 ### Segurança de chaves
 
 As chaves (`AUDIT_NVIDIA_API_KEY`, `AUDIT_LLM_API_KEY`, …) vivem apenas em
 variáveis de ambiente / `.env` (ignorado pelo git) — **nunca** em ficheiros
-versionados. `.env.example` traz os placeholders.
+versionados. `.env.example` traz os placeholders. Como alternativa (e de
+forma preferencial), as chaves de IA podem ficar **encriptadas na BD**
+(seção acima) — cifradas com Fernet, nunca devolvidas em texto claro por
+nenhum endpoint.
 
 ---
 
@@ -350,6 +383,18 @@ GET  /django/api/ai/copilot/digest/email/preview → email HTML no browser
 POST /django/api/ai/copilot/act             → executar ação proposta (pós-confirmação)
 POST /django/api/ai/copilot/feedback        → avaliar resposta (1-5)
 GET  /django/api/ai/copilot/feedback/stats  → métricas de qualidade
+
+# Motores de IA (LLM + NIM Studio)
+GET  /django/api/ai/llm/status              → cadeia de motores ao vivo
+POST /django/api/ai/llm/test               → ping real (auditor/admin)
+POST /django/api/bi/narrate                → narração executiva do Painel Auto
+GET  /django/api/ai/nim/credentials        → credenciais IA na BD (mascaradas)
+POST /django/api/ai/nim/credentials        → grava/limpa slot (auditor/admin)
+GET  /django/api/ai/nim/status             → estado dos slots/motores NIM
+POST /django/api/ai/nim/image              → gera imagem FLUX.2-klein-4B
+GET  /django/api/ai/nim/images             → galeria (metadados)
+GET  /django/api/ai/nim/images/<id>/file   → JPEG da galeria
+POST /django/api/ai/nim/vision             → compreensão de imagem/vídeo (omni)
 ```
 
 ---
@@ -397,3 +442,4 @@ docker-compose.yml    stack completa (perfis: core, worker, ai)
 | Copiloto v7 | Ações agénticas com confirmação humana + auditoria imutável |
 | Copiloto v8 | Email HTML premium + pré-visualização no browser |
 | Hardening | CI, Docker completo (perfis), health check, SMTP configurável, README |
+| NIM Studio | Imagens FLUX.2-klein-4B + galeria, visão omni (imagem/vídeo), credenciais IA encriptadas na BD |

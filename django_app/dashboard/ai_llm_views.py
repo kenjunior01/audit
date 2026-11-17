@@ -28,7 +28,8 @@ def llm_status(request):
     return Response({
         "providers": providers,
         "chain": [p["id"] for p in providers if p["configured"]],
-        "active_hint": ("nvidia" if llm_client.NVIDIA_API_KEY else "primary"),
+        "active_hint": ("nvidia" if llm_client._text_cfg()["api_key"]
+                        else "primary"),
         "any_available": any(p["available"] for p in providers),
     })
 

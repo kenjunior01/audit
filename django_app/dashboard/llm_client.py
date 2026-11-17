@@ -51,6 +51,22 @@ LLM_API_KEY = os.environ.get("AUDIT_LLM_API_KEY") or os.environ.get("GROQ_API_KE
 _THINK_RE = re.compile(r"<think>.*?</think>", re.S)
 
 
+def _text_cfg():
+    """Config efetiva do slot text: BD (credencial encriptada) → env →
+    constantes de módulo (retro-compatibilidade com testes/install via env).
+    Nunca lança; devolve {'api_key','model','base_url','source'}."""
+    try:
+        from . import ai_credentials
+        cfg = ai_credentials.resolve_slot("text")
+        if cfg.get("api_key"):
+            return cfg
+    except Exception:
+        pass
+    return {"api_key": NVIDIA_API_KEY, "model": NVIDIA_MODEL,
+            "base_url": NVIDIA_BASE_URL,
+            "source": "module" if NVIDIA_API_KEY else ""}
+
+
 def openai_compatible_headers():
     headers = {"Content-Type": "application/json"}
     if LLM_API_KEY:
@@ -76,12 +92,13 @@ def _openai_headers(api_key):
 # Probes de disponibilidade
 # ---------------------------------------------------------------------------
 def _nvidia_probe(timeout=2.5):
-    if not NVIDIA_API_KEY:
+    cfg = _text_cfg()
+    if not cfg["api_key"]:
         return False
     try:
         response = requests.get(
-            f"{NVIDIA_BASE_URL}/models",
-            headers={"Authorization": f"Bearer {NVIDIA_API_KEY}"},
+            f"{cfg['base_url']}/models",
+            headers={"Authorization": f"Bearer {cfg['api_key']}"},
             timeout=timeout)
         return response.status_code == 200
     except requests.RequestException:
@@ -111,8 +128,9 @@ def is_available(timeout=2.5):
 # Geração (não-streaming) por provider
 # ---------------------------------------------------------------------------
 def _nvidia_generate(prompt, *, timeout, temperature, max_tokens):
+    cfg = _text_cfg()
     body = {
-        "model": NVIDIA_MODEL,
+        "model": cfg["model"],
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
         "max_tokens": max_tokens,
@@ -121,8 +139,8 @@ def _nvidia_generate(prompt, *, timeout, temperature, max_tokens):
     if NVIDIA_REASONING:
         body["chat_template_kwargs"] = {"enable_thinking": True}
     response = requests.post(
-        f"{NVIDIA_BASE_URL}/chat/completions",
-        headers=_openai_headers(NVIDIA_API_KEY),
+        f"{cfg['base_url']}/chat/completions",
+        headers=_openai_headers(cfg["api_key"]),
         json=body,
         timeout=timeout,
     )
@@ -172,7 +190,7 @@ def _primary_generate(prompt, *, timeout, temperature, max_tokens):
 # ---------------------------------------------------------------------------
 def generate_meta(prompt, *, timeout=25, temperature=0.2, max_tokens=900):
     """Devolve (texto, meta{provider, model, latency_ms}). Percorre a cadeia."""
-    providers = (["nvidia"] if NVIDIA_API_KEY else []) + ["primary"]
+    providers = (["nvidia"] if _text_cfg()["api_key"] else []) + ["primary"]
     last_error = None
     for pid in providers:
         start = time.monotonic()
@@ -181,7 +199,7 @@ def generate_meta(prompt, *, timeout=25, temperature=0.2, max_tokens=900):
                 text = _nvidia_generate(prompt, timeout=timeout,
                                         temperature=temperature,
                                         max_tokens=max_tokens)
-                model = NVIDIA_MODEL
+                model = _text_cfg()["model"]
             else:
                 text = _primary_generate(prompt, timeout=timeout,
                                          temperature=temperature,
@@ -236,8 +254,9 @@ def _iter_openai_sse(response):
 
 
 def _nvidia_generate_stream(prompt, *, timeout, temperature, max_tokens):
+    cfg = _text_cfg()
     body = {
-        "model": NVIDIA_MODEL,
+        "model": cfg["model"],
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
         "max_tokens": max_tokens,
@@ -246,8 +265,8 @@ def _nvidia_generate_stream(prompt, *, timeout, temperature, max_tokens):
     if NVIDIA_REASONING:
         body["chat_template_kwargs"] = {"enable_thinking": True}
     response = requests.post(
-        f"{NVIDIA_BASE_URL}/chat/completions",
-        headers=_openai_headers(NVIDIA_API_KEY),
+        f"{cfg['base_url']}/chat/completions",
+        headers=_openai_headers(cfg["api_key"]),
         json=body, timeout=timeout, stream=True)
     response.raise_for_status()
     yield from _iter_openai_sse(response)
@@ -289,7 +308,7 @@ def _primary_generate_stream(prompt, *, timeout, temperature, max_tokens):
 def generate_stream(prompt, *, timeout=60, temperature=0.2, max_tokens=900,
                     provider=None):
     """Gerador de chunks de texto: tenta nvidia → primary (SSE)."""
-    if NVIDIA_API_KEY and provider in (None, "nvidia"):
+    if _text_cfg()["api_key"] and provider in (None, "nvidia"):
         try:
             yield from _nvidia_generate_stream(prompt, timeout=timeout,
                                                temperature=temperature,
@@ -308,12 +327,14 @@ def generate_stream(prompt, *, timeout=60, temperature=0.2, max_tokens=900,
 # ---------------------------------------------------------------------------
 def provider_status(timeout=2.5):
     """Lista os motores configurados com disponibilidade ao vivo."""
+    cfg = _text_cfg()
     out = [{
         "id": "nvidia", "priority": 1,
         "label": "NVIDIA NIM", "style": "openai-compatible",
-        "base_url": NVIDIA_BASE_URL, "model": NVIDIA_MODEL,
-        "auth": bool(NVIDIA_API_KEY), "reasoning": NVIDIA_REASONING,
-        "configured": bool(NVIDIA_API_KEY),
+        "base_url": cfg["base_url"], "model": cfg["model"],
+        "auth": bool(cfg["api_key"]), "reasoning": NVIDIA_REASONING,
+        "configured": bool(cfg["api_key"]),
+        "source": cfg["source"],
         "available": _nvidia_probe(timeout),
     }, {
         "id": "primary", "priority": 2,

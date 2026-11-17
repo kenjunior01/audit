@@ -728,3 +728,45 @@ class MeasureAlert(models.Model):
 
     def __str__(self):
         return f"Alerta {self.name}: {self.get_comparator_display()} {self.threshold}"
+
+
+class AiCredential(models.Model):
+    """Credencial de IA por slot (text/vision/image), cifrada na BD com
+    Fernet (prefixo 'enc:v1:'). Permite gerir as chaves NVIDIA NIM pelo
+    painel/API sem reiniciar o serviço — env é o fallback."""
+
+    SLOT_CHOICES = (('text', 'Texto (Nemotron)'), ('vision', 'Visão (omni)'),
+                    ('image', 'Imagem (FLUX.2)'))
+
+    slot = models.CharField(max_length=20, unique=True, choices=SLOT_CHOICES)
+    api_key = models.TextField(blank=True, default='')  # cifrado enc:v1:…
+    model = models.CharField(max_length=200, blank=True, default='')
+    base_url = models.CharField(max_length=300, blank=True, default='')
+    updated_by = models.CharField(max_length=150, blank=True, default='')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['slot']
+
+    def __str__(self):
+        return f"Credencial IA: {self.slot} ({self.updated_at:%Y-%m-%d %H:%M})"
+
+
+class NimImage(models.Model):
+    """Imagem gerada pelo estúdio NIM (FLUX.2-klein-4B) — galeria do painel."""
+
+    prompt = models.TextField()
+    width = models.PositiveIntegerField(default=1024)
+    height = models.PositiveIntegerField(default=1024)
+    steps = models.PositiveIntegerField(default=4)
+    seed = models.BigIntegerField(null=True, blank=True)
+    model = models.CharField(max_length=200, blank=True, default='')
+    image = models.FileField(upload_to='nim_images/%Y/%m/', max_length=500)
+    created_by = models.CharField(max_length=128, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"NIM #{self.pk}: {self.prompt[:40]}…"

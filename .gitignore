@@ -174,3 +174,6 @@ frontend/tsconfig.tsbuildinfo
 !desktop/build/
 !desktop/build/**
 !desktop-backend/*.spec
+
+# galeria NIM (dados de utilizador gerados, nunca versionar)
+django_app/media/

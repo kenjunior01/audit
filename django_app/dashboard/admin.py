@@ -2,7 +2,8 @@ from django.contrib import admin
 from .models import (
     Transaction, Alert, RegulatoryRule, AiFeedback, ContextProfile,
     RegulatorySource, ContextDocument, DocumentChunk, IntegrationSettings,
-    AuditCase, AuditCaseComment, AuditCaseAttachment, RiskAgent, ApiToken, RiskAgentLog
+    AuditCase, AuditCaseComment, AuditCaseAttachment, RiskAgent, ApiToken, RiskAgentLog,
+    AiCredential, NimImage
 )
 
 @admin.register(RiskAgentLog)
@@ -93,3 +94,24 @@ class RiskAgentAdmin(admin.ModelAdmin):
     list_display = ('name', 'action', 'active', 'last_triggered', 'created_at')
     list_filter = ('active', 'action')
     search_fields = ('name', 'action')
+
+@admin.register(AiCredential)
+class AiCredentialAdmin(admin.ModelAdmin):
+    """Credenciais IA — chave sempre mascarada (nunca reversível no admin)."""
+    list_display = ('slot', 'masked_key', 'model', 'updated_by', 'updated_at')
+    readonly_fields = ('masked_key',)
+
+    @admin.display(description='API key (mascarada)')
+    def masked_key(self, obj):
+        from .ai_credentials import decrypt_secret, mask_key
+        return mask_key(decrypt_secret(obj.api_key)) or '—'
+
+@admin.register(NimImage)
+class NimImageAdmin(admin.ModelAdmin):
+    list_display = ('id', 'short_prompt', 'width', 'height', 'steps',
+                    'created_by', 'created_at')
+    search_fields = ('prompt',)
+
+    @admin.display(description='Prompt')
+    def short_prompt(self, obj):
+        return (obj.prompt[:60] + '…') if len(obj.prompt) > 60 else obj.prompt

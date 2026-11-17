@@ -7,6 +7,7 @@ import { Plus, Trash2, ExternalLink, Play, TestTube2, Eye } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { AiEnginesCard } from "@/components/dashboard/AiEnginesCard"
+import { NimStudioCard } from "@/components/dashboard/NimStudioCard"
 
 interface ExternalSystem {
   id: number
@@ -292,6 +293,8 @@ export default function IntegrationsPage() {
       </div>
 
       <AiEnginesCard />
+
+      <NimStudioCard />
 
       {publicServices.length > 0 && (
         <section className="space-y-3">
