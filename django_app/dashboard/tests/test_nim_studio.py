@@ -6,6 +6,7 @@ persistência NimImage e permissões.
 """
 import base64
 import uuid
+from contextlib import ExitStack
 from unittest.mock import Mock, patch
 
 from django.core.files.base import ContentFile
@@ -13,9 +14,10 @@ from django.test import SimpleTestCase, TestCase
 from rest_framework.test import APIClient
 
 from dashboard import nvidia_client, ai_nim_views
-from dashboard.models import ApiToken, NimImage
+from dashboard.models import ApiToken, NimImage, StockImage
 
 JPEG = base64.b64encode(b"\xff\xd8\xff\xe0fakejpeg").decode()
+PNG = b"\x89PNG\r\n\x1a\n" + b"fakepngdata"
 
 
 def _image_response():
@@ -330,10 +332,82 @@ class ReportCoverTest(TestCase):
 
     def test_cover_engine_failure_502(self):
         with patch("dashboard.nvidia_client.generate_image",
-                   side_effect=Exception("boom")):
+                   side_effect=Exception("boom")), \
+             patch("dashboard.ai_nim_views._bank_cover", return_value=None):
             r = self._client(self.admin).post("/django/api/reports/ai-cover",
                                               {}, format="json")
         self.assertEqual(r.status_code, 502)
+
+    # --- fallback do Banco de Imagens (capa funciona sem chave FLUX) ---
+    def _bank_result(self):
+        return {"provider": "met", "query": "corporate office building",
+                "page": 1, "page_size": 6, "result_count": 1,
+                "results": [{"image_id": "met-cover-1",
+                             "title": "Edifício corporativo", "author": "Met",
+                             "license": "Open Access (CC0)",
+                             "license_url": "https://met.org/oa",
+                             "landing_url": "https://met.org/1",
+                             "url": "https://images.met.org/1.jpg",
+                             "thumb_url": "https://images.met.org/1_s.jpg",
+                             "width": None, "height": None}]}
+
+    def _patch_bank(self):
+        """ExitStack com os patches do banco (search + download em mock)."""
+        st = ExitStack()
+        st.enter_context(patch("dashboard.imagebank.search",
+                               return_value=self._bank_result()))
+        st.enter_context(patch("dashboard.imagebank.download_image",
+                               return_value=(PNG, "image/png", "png")))
+        return st
+
+    def test_cover_falls_back_to_bank_without_flux(self):
+        with patch("dashboard.nvidia_client.generate_image",
+                   side_effect=RuntimeError("FLUX não configurado (slot image).")), \
+             self._patch_bank():
+            r = self._client(self.admin).post("/django/api/reports/ai-cover",
+                                              {}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data["source"], "bank")
+        self.assertTrue(r.data["fallback"])
+        self.assertTrue(str(r.data["model"]).startswith("banco-de-imagens:met"))
+        self.assertTrue(r.data["image"].startswith("data:image/png;base64,"))
+        self.assertTrue(str(r.data["file_url"]).startswith("/ai/bank/images/"))
+        rec = StockImage.objects.get(pk=r.data["id"])
+        self.assertEqual(rec.provider, "met")
+        self.assertEqual(rec.query, "capa-relatório")
+        self.assertEqual(rec.file_size, len(PNG))
+        # dedupe: segunda chamada devolve a MESMA imagem (sem nova descarga)
+        with patch("dashboard.nvidia_client.generate_image",
+                   side_effect=RuntimeError("FLUX não configurado.")), \
+             self._patch_bank():
+            r2 = self._client(self.admin).post("/django/api/reports/ai-cover",
+                                               {}, format="json")
+        self.assertEqual(r2.status_code, 200)
+        self.assertEqual(r2.data["id"], r.data["id"])
+        self.assertEqual(StockImage.objects.count(), 1)
+        rec.file.delete(save=True)
+
+    def test_cover_bank_also_fails_returns_flux_error(self):
+        with patch("dashboard.nvidia_client.generate_image",
+                   side_effect=RuntimeError("sem chave FLUX no slot image")), \
+             patch("dashboard.imagebank.search",
+                   side_effect=RuntimeError("met indisponível")):
+            r = self._client(self.admin).post("/django/api/reports/ai-cover",
+                                              {}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("sem chave FLUX", r.json()["error"])
+
+    def test_bank_cover_used_in_pdf(self):
+        with patch("dashboard.nvidia_client.generate_image",
+                   side_effect=RuntimeError("FLUX não configurado.")), \
+             self._patch_bank():
+            cover_id = self._client(self.admin).post(
+                "/django/api/reports/ai-cover", {}, format="json").data["id"]
+        r = self._client(self.admin).get("/django/api/reports/audit/pdf",
+                                         {"cover": cover_id})
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.content[:4] == b"%PDF")
+        StockImage.objects.get(pk=cover_id).file.delete(save=True)
 
     def test_cover_image_bytes_helper(self):
         self.assertIsNone(ai_nim_views.cover_image_bytes(""))

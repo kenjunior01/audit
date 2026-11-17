@@ -116,7 +116,7 @@ export function AuditReportCard() {
           <img src={cover.image} alt="Capa gerada por IA" className="w-24 h-16 object-cover rounded-lg border border-slate-200 dark:border-slate-700" />
           <div className="flex-1">
             <p className="text-xs font-medium text-slate-700 dark:text-slate-200">Capa IA pronta</p>
-            <p className="text-[11px] text-slate-500">A capa entra no PDF ao descarregar{cover.source === 'db' ? ' · motor BD' : ''}.</p>
+            <p className="text-[11px] text-slate-500">A capa entra no PDF ao descarregar{cover.source === 'db' ? ' · motor BD' : cover.source === 'bank' ? ' · banco de imagens' : ''}.</p>
           </div>
           <button onClick={() => setCover(null)} className="text-slate-400 hover:text-slate-600" title="Remover capa">
             <X className="w-4 h-4" />

@@ -20,7 +20,7 @@ from django.http import FileResponse
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
-from . import ai_credentials, llm_client, nvidia_client
+from . import ai_credentials, imagebank, llm_client, nvidia_client
 from .auth import IsAuditorOrAdmin, IsViewerOrAbove
 from .models import NimImage, StockImage
 
@@ -247,41 +247,117 @@ def nim_image_file(request, pk):
     return FileResponse(fh, content_type="image/jpeg")
 
 
+COVER_BANK_QUERIES = ("corporate office building", "business finance office",
+                      "escritório corporativo moderno")
+
+
+def _bank_cover(user):
+    """Capa de fallback com imagem REAL do Banco de Imagens (met/openverse,
+    sem chave) quando o FLUX não está configurado ou falha. Descarrega e
+    guarda na galeria StockImage (dedupe por provider+image_id). Devolve o
+    mesmo contrato do FLUX com source='bank', ou None se nada funcionou."""
+    for provider in ("met", "openverse"):
+        for q in COVER_BANK_QUERIES:
+            try:
+                res = imagebank.search(q, provider=provider)
+            except Exception as e:
+                logger.info("capa fallback %s falhou: %s", provider, e)
+                continue
+            for item in res.get("results", []):
+                url = str(item.get("url") or "")
+                pid = str(item.get("image_id") or "")[:128]
+                if not pid or not url.lower().startswith(("http://",
+                                                          "https://")):
+                    continue
+                try:
+                    raw, _ct, ext = imagebank.download_image(url)
+                except Exception as e:
+                    logger.info("capa fallback descarga %s falhou: %s", pid, e)
+                    continue
+                rec = StockImage.objects.filter(provider=provider,
+                                                provider_image_id=pid).first()
+                if not rec:
+                    rec = StockImage(
+                        provider=provider, provider_image_id=pid,
+                        query="capa-relatório",
+                        title=str(item.get("title") or "")[:300],
+                        author=str(item.get("author") or "")[:200],
+                        license=str(item.get("license") or "")[:64],
+                        license_url=str(item.get("license_url") or "")[:300],
+                        landing_url=str(item.get("landing_url") or "")[:500],
+                        source_url=url[:2048],
+                        width=item.get("width"), height=item.get("height"),
+                        created_by=user)
+                    rec.file.save(
+                        f"bank_{provider}_{uuid.uuid4().hex[:12]}."
+                        f"{ext or 'jpg'}",
+                        ContentFile(raw), save=False)
+                    rec.file_size = len(raw)
+                    rec.save()
+                    logger.info("capa fallback: banco %s/%s (%d bytes) por %s",
+                                provider, pid, len(raw), user or "?")
+                mime = {"jpg": "image/jpeg", "png": "image/png",
+                        "gif": "image/gif", "webp": "image/webp",
+                        "svg": "image/svg+xml"}.get(ext or "jpg",
+                                                    "image/jpeg")
+                return {
+                    "id": rec.pk,
+                    "image": "data:%s;base64,%s"
+                             % (mime, base64.b64encode(raw).decode()),
+                    "width": rec.width or 768,
+                    "height": rec.height or 512,
+                    "model": "banco-de-imagens:%s" % provider,
+                    "latency_ms": None, "source": "bank",
+                    "file_url": f"/ai/bank/images/{rec.pk}/file",
+                    "fallback": True,
+                }
+    return None
+
+
 @api_view(["POST"])
 @permission_classes([IsAuditorOrAdmin])
 def nim_report_cover(request):
     """Capa ilustrada para o Relatório Global de Auditoria, gerada por FLUX
     (768×512 paisagem). Guardada na galeria NimImage — o PDF aceita
-    ?cover=<id> para a embutir na capa."""
+    ?cover=<id> para a embutir na capa. Sem chave FLUX (ou falha upstream)
+    → fallback automático a uma imagem real do Banco de Imagens, para a
+    plataforma continuar funcional sem credenciais de imagem."""
     days = str(request.data.get("days") or 30)
     prompt = ("Capa de relatório executivo de auditoria financeira, design "
               "corporativo moderno, paleta azul-escuro e dourado, gráficos "
               "abstratos elegantes em fundo claro, estilo profissional "
               "minimalista, sem texto, sem letras, sem palavras")
+    err, err_status, result = None, 502, None
     try:
         result = nvidia_client.generate_image(prompt, width=768, height=512,
                                               steps=4)
     except RuntimeError as e:
-        return Response({"error": str(e)}, status=400)
+        err, err_status = str(e), 400
     except Exception as e:
         logger.warning("nim/report-cover falhou: %s", e)
-        return Response({"error": f"Falha no motor de imagem: {str(e)[:200]}"},
-                        status=502)
-    record = NimImage(prompt=f"[capa de relatório days={days}] {prompt}",
-                      width=768, height=512, steps=4, seed=None,
-                      model=result["model"], created_by=_user_name(request))
-    try:
-        raw = base64.b64decode(result["image_b64"])
-    except Exception:
-        return Response({"error": "Resposta do FLUX inválida."}, status=502)
-    record.image.save(f"nim_cover_{uuid.uuid4().hex[:12]}.jpg",
-                      ContentFile(raw), save=True)
-    return Response({
-        "id": record.pk, "image": "data:image/jpeg;base64," + result["image_b64"],
-        "width": 768, "height": 512, "model": result["model"],
-        "latency_ms": result.get("latency_ms"), "source": result["source"],
-        "file_url": f"/ai/nim/images/{record.pk}/file",
-    })
+        err = f"Falha no motor de imagem: {str(e)[:200]}"
+    if result:
+        record = NimImage(prompt=f"[capa de relatório days={days}] {prompt}",
+                          width=768, height=512, steps=4, seed=None,
+                          model=result["model"], created_by=_user_name(request))
+        try:
+            raw = base64.b64decode(result["image_b64"])
+        except Exception:
+            return Response({"error": "Resposta do FLUX inválida."}, status=502)
+        record.image.save(f"nim_cover_{uuid.uuid4().hex[:12]}.jpg",
+                          ContentFile(raw), save=True)
+        return Response({
+            "id": record.pk, "image": "data:image/jpeg;base64," + result["image_b64"],
+            "width": 768, "height": 512, "model": result["model"],
+            "latency_ms": result.get("latency_ms"), "source": result["source"],
+            "file_url": f"/ai/nim/images/{record.pk}/file",
+        })
+    fallback = _bank_cover(_user_name(request))
+    if fallback:
+        return Response(fallback)
+    return Response({"error": err
+                     or "Sem motor de imagem nem banco de imagens disponível."},
+                    status=err_status)
 
 
 def cover_image_bytes(cover_id):

@@ -421,8 +421,28 @@ AUDIT_DATABASE_URL="postgresql://user:pass@db.xxx.supabase.co:5432/postgres?sslm
 O launcher `scripts/start_audit_stack.sh` **arranca automaticamente um
 PostgreSQL 16 embutido** (data-dir persistente `audit-pg/`, via `pgserver`)
 quando `AUDIT_DATABASE_URL` não está definida — o SQLite só é usado como
-última alternativa. Migrações, testes (456) e credenciais Fernet correm
+última alternativa. Migrações, testes (458) e credenciais Fernet correm
 no mesmo motor em dev e produção.
+
+### Backup real do PostgreSQL (com verificação de restauro)
+
+```bash
+/home/z/.venv/bin/python scripts/backup_postgres.py
+# → dump custom -Fc em /home/z/my-project/backups/audit-YYYYmmdd-HHMMSS.dump
+# → pg_restore --list + restauro VERIFICADO numa base temporária (47 tabelas)
+# → retenção: mantém os 10 mais recentes
+```
+
+Funciona igualmente com `AUDIT_DATABASE_URL` externa (Supabase/Neon) —
+nessa altura salta o teste de restauro para não criar bases na cloud.
+
+### Capa IA do Relatório Global — funciona sem chave FLUX
+
+O botão "Capa IA" usa o FLUX (768×512) quando o slot `image` tem chave;
+**sem chave (ou falha upstream) cai automaticamente ao Banco de Imagens** —
+busca real (Met/Openverse), guarda na galeria com dedupe (`query=
+'capa-relatório'`) e devolve `source='bank'`. O PDF aceita capas de
+qualquer origem (`?cover=<NimImage|StockImage id>`).
 
 ---
 
