@@ -12,7 +12,7 @@ from django.core.files.base import ContentFile
 from django.test import SimpleTestCase, TestCase
 from rest_framework.test import APIClient
 
-from dashboard import nvidia_client
+from dashboard import nvidia_client, ai_nim_views
 from dashboard.models import ApiToken, NimImage
 
 JPEG = base64.b64encode(b"\xff\xd8\xff\xe0fakejpeg").decode()
@@ -284,3 +284,66 @@ class NimStudioViewsTest(TestCase):
         self.assertIn("image", r.data["slots"])
         ids = [e["id"] for e in r.data["engines"]]
         self.assertEqual(ids, ["vision", "image"])
+
+
+class ReportCoverTest(TestCase):
+    """Capa IA do Relatório Global (FLUX 768×512) + ?cover= no PDF."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.admin = str(uuid.uuid4())
+        ApiToken.objects.create(token=cls.admin, user_id="admin@x.pt",
+                                role="admin")
+        cls.viewer = str(uuid.uuid4())
+        ApiToken.objects.create(token=cls.viewer, user_id="viewer@x.pt",
+                                role="viewer")
+
+    def _client(self, token):
+        c = APIClient()
+        c.credentials(HTTP_AUTHORIZATION="Bearer " + token)
+        return c
+
+    def _gen_result(self):
+        return {"image_b64": JPEG, "finish_reason": "SUCCESS",
+                "model": "black-forest-labs/flux.2-klein-4b",
+                "width": 768, "height": 512, "steps": 4, "seed": None,
+                "latency_ms": 800, "source": "db"}
+
+    def test_cover_requires_auditor(self):
+        r = self._client(self.viewer).post("/django/api/reports/ai-cover",
+                                           {}, format="json")
+        self.assertIn(r.status_code, (401, 403))
+
+    def test_cover_generates_and_persists(self):
+        with patch("dashboard.nvidia_client.generate_image",
+                   return_value=self._gen_result()):
+            r = self._client(self.admin).post("/django/api/reports/ai-cover",
+                                              {"days": 30}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.data["image"].startswith("data:image/jpeg;base64,"))
+        self.assertEqual(r.data["width"], 768)
+        self.assertEqual(r.data["height"], 512)
+        rec = NimImage.objects.get(pk=r.data["id"])
+        self.assertIn("[capa de relatório", rec.prompt)
+        self.assertTrue(rec.image.name.startswith("nim_images/"))
+        rec.image.delete(save=True)
+
+    def test_cover_engine_failure_502(self):
+        with patch("dashboard.nvidia_client.generate_image",
+                   side_effect=Exception("boom")):
+            r = self._client(self.admin).post("/django/api/reports/ai-cover",
+                                              {}, format="json")
+        self.assertEqual(r.status_code, 502)
+
+    def test_cover_image_bytes_helper(self):
+        self.assertIsNone(ai_nim_views.cover_image_bytes(""))
+        self.assertIsNone(ai_nim_views.cover_image_bytes("999999"))
+        with patch("dashboard.nvidia_client.generate_image",
+                   return_value=self._gen_result()):
+            r = self._client(self.admin).post("/django/api/reports/ai-cover",
+                                              {}, format="json")
+        raw = base64.b64decode(JPEG)
+        # o guardado é um JPEG sintético (não válido para PIL) — só verifica
+        # que o helper devolve bytes do ficheiro da galeria
+        self.assertEqual(ai_nim_views.cover_image_bytes(r.data["id"]), raw)
+        NimImage.objects.get(pk=r.data["id"]).image.delete(save=True)

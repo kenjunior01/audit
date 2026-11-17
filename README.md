@@ -80,6 +80,7 @@ workbook auto-atualizável (`tblDados` + KPIs vivos + folha de fórmulas).
 | **Reativa** | v1-v3 | Chat com 14 ferramentas sobre dados vivos (alertas, transações, casos, SLA, Benford, previsão de risco…), streaming SSE, trace agéntico por ferramenta, feedback 1-5 |
 | **Proativa** | v4, v6 | Sinais proativos em tempo real (badge + cartões clicáveis), botão **IA** em cada linha de alerta/caso, ditadura por voz (pt-PT) |
 | **Programada** | v5, v8 | **Digest** diário/semanal por cron/beat: email (texto + **HTML premium** + **PDF executivo**), dedupe por (período, dia), log imutável, card no dashboard com pré-visualização |
+| **Multimodal** | v10 | **Visão omni**: anexa um URL de imagem no copiloto — o motor omni (NIM) descreve o que vê e a observação entra no contexto agéntico (ex.: foto de uma fatura + «quantas transações como esta há?»); falha da visão degrada para só-texto |
 
 ### Ações agénticas com confirmação humana (v7)
 
@@ -108,6 +109,11 @@ com KPIs, metodologia, análise de risco (distribuição por severidade, top
 fornecedores, Benford MAD, tendência 7d), achados principais, carteira de casos,
 qualidade de dados e recomendações determinísticas. Preview JSON no cartão do
 dashboard + download em `/api/reports/audit/pdf?days=30` (papel auditor/admin).
+
+**Capa IA (novo)**: o botão «Capa IA» do cartão gera uma ilustração executiva
+com FLUX.2-klein-4B (`POST /api/reports/ai-cover`, 768×512, guardada na galeria
+NimImage) e o PDF seguinte embute-a na capa via `?cover=<id>`. Capa é
+decorativa — falha ou id desconhecido nunca bloqueia o relatório.
 
 ### Observabilidade e documentação da API
 
@@ -400,6 +406,9 @@ POST /django/api/ai/nim/image              → gera imagem FLUX.2-klein-4B
 GET  /django/api/ai/nim/images             → galeria (metadados)
 GET  /django/api/ai/nim/images/<id>/file   → JPEG da galeria
 POST /django/api/ai/nim/vision             → compreensão de imagem/vídeo (omni)
+POST /django/api/reports/ai-cover          → capa IA (FLUX 768×512) p/ relatório
+GET  /django/api/reports/audit/pdf?cover=  → PDF do relatório com capa IA
+(POST /django/api/ai/copilot aceita image_url → visão omni no chat)
 ```
 
 ---

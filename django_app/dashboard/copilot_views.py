@@ -18,9 +18,37 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from . import copilot_service as cs
+from . import nvidia_client
 from .models import CopilotFeedback
 
 logger = logging.getLogger(__name__)
+
+
+def _vision_context(request):
+    """Suporte omni no copiloto: se o pedido trouxer 'image_url', a imagem é
+    analisada pelo motor de visão (NVIDIA NIM) e a observação é injetada no
+    contexto da pergunta. Devolve (pergunta_enriquecida, bloco_vision|None).
+    Falha do motor de visão não derruba o chat — segue só texto com
+    'vision_error'."""
+    url = str(request.data.get("image_url") or "").strip()
+    if not url:
+        return None, None
+    if not (url.startswith("http://") or url.startswith("https://")) or len(url) > 2048:
+        raise ValueError("image_url inválido (http/https, máx. 2048 carateres).")
+    question = str(request.data.get("question") or "").strip()
+    try:
+        obs = nvidia_client.vision_describe(url, question=question)
+    except Exception as e:
+        logger.warning("copilot vision falhou: %s", e)
+        return None, {"url": url, "error": str(e)[:200]}
+    observation = obs.get("answer", "")
+    q_aug = question
+    if observation:
+        q_aug = (f"{question}\n\n[Imagem anexada pelo utilizador ({obs.get('media_type', 'image')}"
+                 f") — o que se vê: {observation}]")
+    return q_aug, {"url": url, "observation": observation,
+                   "media_type": obs.get("media_type", "image"),
+                   "source": obs.get("source", "")}
 
 
 def _clean_history(history):
@@ -38,20 +66,28 @@ def _clean_history(history):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def copilot_chat(request):
-    """Chat do Copiloto Global — pergunta em lingu natural, dados vivos."""
+    """Chat do Copiloto Global — pergunta em lingu natural, dados vivos.
+    Aceita 'image_url' opcional: a imagem é descrita pelo motor omni e a
+    observação entra no contexto agéntico."""
     question = (request.data.get("question") or "").strip()
     if not question:
         return Response({"error": "Indique uma pergunta."},
                         status=status.HTTP_400_BAD_REQUEST)
+    try:
+        q_aug, vision = _vision_context(request)
+    except ValueError as e:
+        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
     history = _clean_history(request.data.get("history"))
     # página atual do frontend (consciência de contexto do copiloto)
     page = str(request.data.get("page") or "")[:60]
     try:
-        result = cs.chat(question, history, page=page)
+        result = cs.chat(q_aug or question, history, page=page)
     except Exception as e:
         logger.exception("copilot_chat falhou")
         return Response({"error": f"O Copiloto não conseguiu responder: {e}"},
                         status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    if vision:
+        result["vision"] = vision
     return Response(result)
 
 
@@ -79,13 +115,21 @@ def copilot_stream(request):
     if not question:
         return Response({"error": "Indique uma pergunta."},
                         status=status.HTTP_400_BAD_REQUEST)
+    try:
+        q_aug, vision = _vision_context(request)
+    except ValueError as e:
+        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
     history = _clean_history(request.data.get("history"))
     page = str(request.data.get("page") or "")[:60]
 
     def event_stream():
         try:
-            for ev in cs.chat_events(question, history, page=page):
-                payload = json.dumps(ev.get("data", {}),
+            for ev in cs.chat_events(q_aug or question, history, page=page):
+                data = ev.get("data", {})
+                if ev.get("event") == "final" and vision:
+                    data = dict(data)
+                    data["vision"] = vision
+                payload = json.dumps(data,
                                      ensure_ascii=False, default=str)
                 yield f"event: {ev.get('event', 'status')}\ndata: {payload}\n\n"
         except Exception as e:

@@ -245,3 +245,52 @@ def nim_image_file(request, pk):
     except (ValueError, FileNotFoundError):
         return Response({"error": "Ficheiro em falta."}, status=404)
     return FileResponse(fh, content_type="image/jpeg")
+
+
+@api_view(["POST"])
+@permission_classes([IsAuditorOrAdmin])
+def nim_report_cover(request):
+    """Capa ilustrada para o Relatório Global de Auditoria, gerada por FLUX
+    (768×512 paisagem). Guardada na galeria NimImage — o PDF aceita
+    ?cover=<id> para a embutir na capa."""
+    days = str(request.data.get("days") or 30)
+    prompt = ("Capa de relatório executivo de auditoria financeira, design "
+              "corporativo moderno, paleta azul-escuro e dourado, gráficos "
+              "abstratos elegantes em fundo claro, estilo profissional "
+              "minimalista, sem texto, sem letras, sem palavras")
+    try:
+        result = nvidia_client.generate_image(prompt, width=768, height=512,
+                                              steps=4)
+    except RuntimeError as e:
+        return Response({"error": str(e)}, status=400)
+    except Exception as e:
+        logger.warning("nim/report-cover falhou: %s", e)
+        return Response({"error": f"Falha no motor de imagem: {str(e)[:200]}"},
+                        status=502)
+    record = NimImage(prompt=f"[capa de relatório days={days}] {prompt}",
+                      width=768, height=512, steps=4, seed=None,
+                      model=result["model"], created_by=_user_name(request))
+    try:
+        raw = base64.b64decode(result["image_b64"])
+    except Exception:
+        return Response({"error": "Resposta do FLUX inválida."}, status=502)
+    record.image.save(f"nim_cover_{uuid.uuid4().hex[:12]}.jpg",
+                      ContentFile(raw), save=True)
+    return Response({
+        "id": record.pk, "image": "data:image/jpeg;base64," + result["image_b64"],
+        "width": 768, "height": 512, "model": result["model"],
+        "latency_ms": result.get("latency_ms"), "source": result["source"],
+        "file_url": f"/ai/nim/images/{record.pk}/file",
+    })
+
+
+def cover_image_bytes(cover_id):
+    """Bytes JPEG da capa da galeria para embutir no PDF (None se falhar)."""
+    if not cover_id:
+        return None
+    try:
+        record = NimImage.objects.get(pk=cover_id)
+        fh = record.image.open("rb")
+        return fh.read()
+    except (NimImage.DoesNotExist, ValueError, FileNotFoundError):
+        return None

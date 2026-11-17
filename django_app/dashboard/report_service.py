@@ -181,14 +181,17 @@ def build_recommendations(s):
 
 # ---------------------------------------------------------------- PDF
 
-def build_audit_report_pdf(days=30, org_name='AuditAI Omni', generated_by=''):
-    """Gera o PDF completo. Retorna (bytes, file_name)."""
+def build_audit_report_pdf(days=30, org_name='AuditAI Omni', generated_by='',
+                           cover_image=None):
+    """Gera o PDF completo. Retorna (bytes, file_name).
+    cover_image: bytes JPEG opcional — capa ilustrada gerada por IA (FLUX)."""
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import cm
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.platypus import (Image, Paragraph, SimpleDocTemplate,
+                                    Spacer, Table, TableStyle)
 
     s = audit_report_summary(days)
     k = s['kpis']
@@ -218,6 +221,14 @@ def build_audit_report_pdf(days=30, org_name='AuditAI Omni', generated_by=''):
         el.append(Paragraph(f"Elaborado por: {generated_by}", cover_sub))
     el.append(Paragraph(f"Emitido em: {timezone.localtime().strftime('%d/%m/%Y %H:%M')}", cover_sub))
     el.append(Spacer(1, 1.4 * cm))
+    if cover_image:
+        try:
+            img_buf = io.BytesIO(cover_image)
+            # 768×512 (3:2) → 12×8 cm centrado, moldura discreta
+            el.append(Image(img_buf, width=12 * cm, height=8 * cm))
+            el.append(Spacer(1, 0.5 * cm))
+        except Exception:
+            pass  # capa IA é decorativa — nunca bloqueia o relatório
     el.append(Table([[Paragraph('<b>CONFIDENCIAL</b> — documento destinado exclusivamente ao '
                                 'uso interno da equipa de auditoria e ao comité de auditoria.',
                                 ParagraphStyle('conf', parent=small, alignment=TA_CENTER))]],
