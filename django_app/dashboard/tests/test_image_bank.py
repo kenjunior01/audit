@@ -406,6 +406,29 @@ class BankViewsTest(TestCase):
         r = self._client(self.viewer).get("/django/api/ai/bank/images/999/file")
         self.assertEqual(r.status_code, 404)
 
+    def test_file_serves_full_when_thumb_missing_on_disk(self):
+        """Thumb perdido no disco (ex.: restauro de backup) não quebra a
+        galeria — o endpoint serve o original automaticamente."""
+        import os
+        with patch("dashboard.imagebank.download_image",
+                   side_effect=[(PNG, "image/png", "png"),
+                                (PNG, "image/png", "png")]):
+            img = self._client(self.viewer).post(
+                "/django/api/ai/bank/save", self._save_payload(),
+                format="json").json()
+        pk = img["image"]["id"]
+        record = StockImage.objects.get(pk=pk)
+        self.assertTrue(record.thumb)
+        os.remove(record.thumb.path)  # thumb some do disco, campo fica na BD
+        c = self._client(self.viewer)
+        r = c.get(f"/django/api/ai/bank/images/{pk}/file")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "image/png")
+        self.assertEqual(b"".join(r.streaming_content), PNG)
+        r2 = c.get(f"/django/api/ai/bank/images/{pk}/file?full=1")
+        self.assertEqual(r2.status_code, 200)
+        self.assertEqual(r2["Content-Type"], "image/png")
+
     # --- delete ---
     def test_delete_requires_auditor(self):
         with patch("dashboard.imagebank.download_image",

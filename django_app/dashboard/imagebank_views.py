@@ -186,10 +186,22 @@ def bank_image_file(request, pk):
     except StockImage.DoesNotExist:
         return Response({"error": "Imagem não encontrada."}, status=404)
     full = str(request.query_params.get("full") or "") in ("1", "true")
-    field = record.file if (full or not record.thumb) else record.thumb
-    try:
-        fh = field.open("rb")
-    except (ValueError, FileNotFoundError):
+    # thumb em falta no disco → serve o original (a galeria nunca quebra
+    # por um thumb perdido; ex.: restauro de backups/recycle do sandbox)
+    candidates = ([record.file] if (full or not record.thumb)
+                  else [record.thumb, record.file])
+    field = None
+    fh = None
+    for cand in candidates:
+        if not cand:
+            continue
+        try:
+            fh = cand.open("rb")
+            field = cand
+            break
+        except (ValueError, FileNotFoundError):
+            continue
+    if fh is None or field is None:
         return Response({"error": "Ficheiro em falta."}, status=404)
     name = (field.name or "").lower()
     ct = ("image/svg+xml" if name.endswith(".svg")
