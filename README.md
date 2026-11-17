@@ -257,13 +257,18 @@ do catálogo NVIDIA NIM, geridos no painel **Integrações** (cartão
 “NIM Studio — Imagens & Visão”):
 
 - **Geração de imagens** — FLUX.2-klein-4B (`POST /ai/nim/image`): prompt,
-  tamanho (256–1024, múltiplos de 16), passos (1–8) e seed opcional. Cada
+  tamanho (512–1024, múltiplos de 16 — o upstream rejeita < 512), passos
+  (1–8) e seed opcional. Cada
   imagem é guardada na **galeria** (modelo `NimImage`) e servida por
   `GET /ai/nim/images` + `GET /ai/nim/images/<id>/file` (download autenticado).
 - **Compreensão de imagem e vídeo** — Nemotron-3-nano-omni-30b-a3b-reasoning
   (`POST /ai/nim/vision`): URL de imagem **ou vídeo** (auto-detetado pela
-  extensão — mp4/webm/mov/mkv/avi), pergunta opcional; o raciocínio
-  (`reasoning_content`) é descartado — só a resposta final regressa.
+  extensão — mp4/webm/mov/mkv/avi), pergunta opcional, `max_tokens`
+  (256–4096, omissão 2048). Em modelos de raciocínio é enviado
+  `reasoning_budget` (4096) para o raciocínio não consumir a resposta; o
+  `reasoning_content` é descartado — só a resposta final regressa.
+  Nota: o download de mídia é feito pelo proxy da NVIDIA — URLs de alguns
+  hosts (ex.: Wikimedia) podem ser recusadas a montante (422).
 - **Credenciais encriptadas na base de dados** (`dashboard/ai_credentials.py`,
   modelo `AiCredential`): cada slot (`text` / `vision` / `image`) guarda a
   chave cifrada com **Fernet** (prefixo `enc:v1:`, derivação

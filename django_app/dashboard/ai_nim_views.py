@@ -27,7 +27,9 @@ from .models import NimImage
 logger = logging.getLogger(__name__)
 
 PROMPT_MAX = 2000
-SIZE_MIN, SIZE_MAX, SIZE_STEP = 256, 1024, 16
+# FLUX.2-klein-4B (upstream): dimensões aceites são múltiplos de 16 no
+# intervalo [512, …]; abaixo de 512 o motor devolve 422. Teto prático 1024.
+SIZE_MIN, SIZE_MAX, SIZE_STEP = 512, 1024, 16
 STEPS_MIN, STEPS_MAX, STEPS_DEFAULT = 1, 8, 4
 
 
@@ -136,9 +138,9 @@ def nim_vision(request):
     question = str(data.get("question") or "").strip()[:1000]
     media_type = str(data.get("media_type") or "").strip().lower() or None
     try:
-        max_tokens = min(2048, max(256, int(data.get("max_tokens") or 1024)))
+        max_tokens = min(4096, max(256, int(data.get("max_tokens") or 2048)))
     except (TypeError, ValueError):
-        max_tokens = 1024
+        max_tokens = 2048
     try:
         result = nvidia_client.vision_describe(url, question=question,
                                                media_type=media_type,

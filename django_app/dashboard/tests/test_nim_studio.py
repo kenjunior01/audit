@@ -126,6 +126,27 @@ class VisionClientTest(SimpleTestCase):
         content = post.call_args.kwargs["json"]["messages"][0]["content"]
         self.assertEqual(content[1]["type"], "video_url")
 
+    def test_reasoning_budget_only_for_reasoning_models(self):
+        """omni/reasoning → envia reasoning_budget; modelo simples → não envia."""
+        def _post(model):
+            return patch("dashboard.nvidia_client.requests.post",
+                         return_value=_vision_response()), \
+                   patch("dashboard.nvidia_client.ai_credentials"
+                         ".resolve_slot",
+                         return_value={"slot": "vision", "api_key": "k",
+                                       "model": model,
+                                       "base_url": "https://integrate.api.nvidia.com/v1",
+                                       "source": "db"})
+        p1, s1 = _post("nvidia/nemotron-3-nano-omni-30b-a3b-reasoning")
+        with s1, p1 as post1:
+            nvidia_client.vision_describe("https://x.jpg")
+        self.assertIn("reasoning_budget", post1.call_args.kwargs["json"])
+
+        p2, s2 = _post("openai/gpt-4o-mini")
+        with s2, p2 as post2:
+            nvidia_client.vision_describe("https://x.jpg")
+        self.assertNotIn("reasoning_budget", post2.call_args.kwargs["json"])
+
     def test_empty_answer_raises(self):
         with patch("dashboard.nvidia_client.ai_credentials"
                    ".resolve_slot",
@@ -161,6 +182,24 @@ class NimStudioViewsTest(TestCase):
         r = self._client(self.viewer).post("/django/api/ai/nim/image",
                                            {}, format="json")
         self.assertEqual(r.status_code, 400)
+
+    def test_image_clamps_min_512(self):
+        """Upstream FLUX rejeita < 512 (422): a vista eleva para o mínimo."""
+        with patch("dashboard.nvidia_client.ai_credentials"
+                   ".resolve_slot",
+                   return_value={"slot": "image", "api_key": "nvapi-db",
+                                 "model": "black-forest-labs/flux.2-klein-4b",
+                                 "base_url": "https://ai.api.nvidia.com/v1/genai",
+                                 "source": "db"}), \
+                patch("dashboard.nvidia_client.requests.post",
+                      return_value=_image_response()):
+            r = self._client(self.viewer).post(
+                "/django/api/ai/nim/image",
+                {"prompt": "mini", "width": 256, "height": 300},
+                format="json")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data["width"], 512)
+        self.assertEqual(r.data["height"], 512)
 
     def test_image_generates_and_persists(self):
         with patch("dashboard.nvidia_client.ai_credentials"

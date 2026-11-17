@@ -76,10 +76,12 @@ def detect_media_type(url):
 # Visão — compreensão de imagem/vídeo (omni reasoning)
 # ---------------------------------------------------------------------------
 def vision_describe(media_url, *, question="", media_type=None,
-                    max_tokens=1024, timeout=90):
+                    max_tokens=2048, reasoning_budget=4096, timeout=120):
     """Devolve {'answer','model','media_type','latency_ms','source'}.
     media_type: 'image' (image_url) ou 'video' (video_url) — auto-detetado
-    pela extensão quando None."""
+    pela extensão quando None. Em modelos de raciocínio (omni) é enviado
+    `reasoning_budget` — sem isso o raciocínio pode consumir o max_tokens
+    e devolver content vazio."""
     cfg = _vision_cfg()
     if not cfg["api_key"]:
         raise RuntimeError("Motor de visão não configurado (slot vision)")
@@ -95,6 +97,9 @@ def vision_describe(media_url, *, question="", media_type=None,
             "messages": [{"role": "user", "content": content}],
             "max_tokens": max(256, int(max_tokens)), "stream": False,
             "temperature": 0.6, "top_p": 0.95}
+    name = str(cfg["model"]).lower()
+    if reasoning_budget and ("omni" in name or "reasoning" in name):
+        body["reasoning_budget"] = max(0, int(reasoning_budget))
     started = time.monotonic()
     response = requests.post(
         f"{cfg['base_url']}/chat/completions",
