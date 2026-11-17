@@ -52,6 +52,32 @@ SLOT_DEFAULTS = {
         "base_env": "AUDIT_NIM_IMAGE_BASE_URL",
         "base_url": "https://ai.api.nvidia.com/v1/genai",
     },
+    # Bancos de imagens — só precisam de chave (sem model/base editáveis).
+    # openverse/wikimedia não exigem chave e nem aparecem aqui.
+    "pexels": {
+        "label": "Banco: Pexels",
+        "key_envs": ["AUDIT_PEXELS_API_KEY", "PEXELS_API_KEY"],
+        "model_env": "", "model": "",
+        "base_env": "", "base_url": "https://api.pexels.com/v1",
+    },
+    "unsplash": {
+        "label": "Banco: Unsplash",
+        "key_envs": ["AUDIT_UNSPLASH_API_KEY", "UNSPLASH_ACCESS_KEY"],
+        "model_env": "", "model": "",
+        "base_env": "", "base_url": "https://api.unsplash.com",
+    },
+    "pixabay": {
+        "label": "Banco: Pixabay",
+        "key_envs": ["AUDIT_PIXABAY_API_KEY", "PIXABAY_API_KEY"],
+        "model_env": "", "model": "",
+        "base_env": "", "base_url": "https://pixabay.com/api",
+    },
+    "freepik": {
+        "label": "Banco: Freepik",
+        "key_envs": ["AUDIT_FREEPIK_API_KEY", "FREEPIK_API_KEY"],
+        "model_env": "", "model": "",
+        "base_env": "", "base_url": "https://api.freepik.com/v1",
+    },
 }
 
 VALID_SLOTS = tuple(SLOT_DEFAULTS)
@@ -116,8 +142,8 @@ def _env_cfg(slot):
         key = (os_env(env_name) or "").strip()
         if key:
             break
-    model = (os_env(d["model_env"]) or "").strip()
-    base = (os_env(d["base_env"]) or "").strip()
+    model = (os_env(d["model_env"]) or "").strip() if d.get("model_env") else ""
+    base = (os_env(d["base_env"]) or "").strip() if d.get("base_env") else ""
     return key, model, base
 
 

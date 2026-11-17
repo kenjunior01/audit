@@ -140,6 +140,36 @@ const DICT: Record<string, [string, string]> = {
   'nim.creds_ok': ['Credenciais atualizadas na BD.', 'Credentials saved to the DB.'],
   'nim.creds_forbidden': ['Só auditor/admin podem alterar credenciais.', 'Only auditor/admin can change credentials.'],
   'nim.model_default': ['omissão', 'default'],
+  // Banco de imagens (busca estilo Freepik/Pexels na plataforma)
+  'bank.title': ['Banco de Imagens', 'Image Bank'],
+  'bank.subtitle': [
+    'Busca real estilo Freepik/Pexels — Openverse e Wikimedia sem chave; Pexels/Unsplash/Pixabay/Freepik com a tua chave.',
+    'Real Freepik/Pexels-style search — Openverse & Wikimedia keyless; Pexels/Unsplash/Pixabay/Freepik with your own key.'],
+  'bank.query': ['Termo de busca', 'Search term'],
+  'bank.query_ph': ['ex.: escritório corporativo, finanças, equipa', 'e.g.: corporate office, finance, team'],
+  'bank.provider': ['Provedor', 'Provider'],
+  'bank.search': ['Buscar', 'Search'],
+  'bank.searching': ['A buscar…', 'Searching…'],
+  'bank.results': ['Resultados', 'Results'],
+  'bank.results_empty': ['Sem resultados — tenta outro termo ou provedor.', 'No results — try another term or provider.'],
+  'bank.save': ['Guardar', 'Save'],
+  'bank.saving': ['A guardar…', 'Saving…'],
+  'bank.saved_title': ['Guardadas na plataforma', 'Saved to platform'],
+  'bank.saved_empty': ['Nada guardado ainda — procura e clica em Guardar.', 'Nothing saved yet — search and click Save.'],
+  'bank.license': ['Licença', 'License'],
+  'bank.delete': ['Remover', 'Remove'],
+  'bank.need_key': ['requer chave', 'requires key'],
+  'bank.key_hint': [
+    'Guarda a chave em Integrações → AI Control Plane (secção bancos de imagens).',
+    'Store the key in Integrations → AI Control Plane (image banks section).'],
+  'bank.err': ['Falha no Banco de Imagens —', 'Image Bank failed —'],
+  'nim.slot_pexels': ['Banco Pexels', 'Pexels bank'],
+  'nim.slot_unsplash': ['Banco Unsplash', 'Unsplash bank'],
+  'nim.slot_pixabay': ['Banco Pixabay', 'Pixabay bank'],
+  'nim.slot_freepik': ['Banco Freepik', 'Freepik bank'],
+  'nim.creds_banks_title': [
+    'Chaves dos bancos de imagens (opcional)',
+    'Image bank keys (optional)'],
 }
 
 type LangCtxT = { lang: Lang, setLang: (l: Lang) => void, t: (k: string) => string }

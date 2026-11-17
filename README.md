@@ -291,6 +291,40 @@ do catálogo NVIDIA NIM, geridos no painel **Integrações** (cartão
 - `GET /ai/nim/status` (viewer+): estado dos 3 slots + motores (fonte da
   credencial, modelo, disponibilidade).
 
+### Banco de Imagens — busca real estilo Freepik dentro da plataforma (novo)
+
+Cartão **“NIM Studio”** (Integrações) tem agora a secção **Banco de Imagens**:
+busca real em catálogos públicos, guarda no servidor e reutilização em
+relatórios — sem depender de hotspots de terceiros.
+
+- **Provedores** (`dashboard/imagebank.py`, todos normalizados para o mesmo
+  formato `title/author/license/url/thumb`):
+  | Provedor | Chave | Conteúdo |
+  |---|---|---|
+  | **Met Museum** (default) | sem chave | obras Open Access **CC0** — API v1.1 (Elastic), paginada |
+  | **Openverse** (WordPress) | sem chave | milhões de imagens CC (Flickr, etc.) |
+  | **Wikimedia Commons** | sem chave | licenças livres (busca `filetype:bitmap`) |
+  | **Pexels / Unsplash / Pixabay / Freepik** | chave própria (BD ou env) | bancos comerciais estilo Freepik |
+- **Chaves dos bancos**: slots `pexels` / `unsplash` / `pixabay` / `freepik`
+  do `AiCredential` (mesma cifragem Fernet na BD) — secção
+  “Chaves dos bancos de imagens (opcional)” no AI Control Plane, ou env
+  `AUDIT_PEXELS_API_KEY` / `AUDIT_UNSPLASH_API_KEY` / `AUDIT_PIXABAY_API_KEY` /
+  `AUDIT_FREEPIK_API_KEY`. Provedores sem chave exigem nada — funcionam já.
+- **Endpoints**: `GET /ai/bank/providers` (estado das chaves),
+  `GET /ai/bank/search?q=&provider=&page=&page_size=` (busca, viewer+),
+  `POST /ai/bank/save` (descarga com validação magic-bytes, teto 25 MB,
+  deduplicação por `(provider, image_id)`, thumb opcional — viewer+),
+  `GET /ai/bank/images` (galeria), `GET /ai/bank/images/<id>/file?full=1`
+  (thumb por omissão, original com `full=1`), `DELETE /ai/bank/images/<id>`
+  (auditor+).
+- **Capa de relatórios**: `GET /reports/audit/pdf?cover=<id>` aceita tanto
+  imagens FLUX da galeria NIM como imagens guardadas do banco (`StockImage`)
+  — úteis com licenças CC0 para documentação formal.
+- Notas: hosts de imagem de alguns provedores bloqueiam IPs de datacenter
+  (Wikimedia/Openverse podem responder 403/429 de sandboxes partilhadas —
+  a plataforma devolve mensagem clara; do teu IP real funcionam). O Met
+  Museum (CC0) é o provedor por omissão por ser estável e sem restrições.
+
 ### Segurança de chaves
 
 As chaves (`AUDIT_NVIDIA_API_KEY`, `AUDIT_LLM_API_KEY`, …) vivem apenas em
@@ -352,6 +386,7 @@ Para dados locais de demonstração, execute `docker compose exec backend python
 | `AUDIT_ALLOWED_HOSTS` | `localhost,127.0.0.1,backend` | Hosts permitidos (CSV) |
 | `AUDIT_DJANGO_SECRET_KEY` | obrigatório no Compose | Segredo Django longo e aleatório |
 | `AUDIT_DATABASE_URL` | SQLite local | `postgres://user:pass@host:5432/audit` |
+| `AUDIT_PEXELS_API_KEY` / `AUDIT_UNSPLASH_API_KEY` / `AUDIT_PIXABAY_API_KEY` / `AUDIT_FREEPIK_API_KEY` | — | Chaves dos bancos de imagens (opcional — também na BD via AI Control Plane) |
 | `AUDIT_CORS_ORIGINS` | `localhost:3000` | Origens CORS (CSV) |
 | `AUDIT_EMAIL_BACKEND` | console | SMTP real: `…smtp.EmailBackend` |
 | `EMAIL_HOST` / `EMAIL_PORT` / `EMAIL_HOST_USER` / `EMAIL_HOST_PASSWORD` / `EMAIL_USE_TLS` | — | Credenciais SMTP |
@@ -368,6 +403,26 @@ Para dados locais de demonstração, execute `docker compose exec backend python
 
 Lista completa e infra self-hosted: [README_INFRA.md](README_INFRA.md) e
 [.env.example](.env.example).
+
+### Base de dados real (PostgreSQL) — produção e dev
+
+A plataforma suporta **PostgreSQL real** via `AUDIT_DATABASE_URL` (parse
+urllib: TCP, socket unix, `sslmode` para cloud, passwords url-encoded):
+
+```bash
+# Cloud (Supabase / Neon / RDS — free tiers disponíveis):
+AUDIT_DATABASE_URL="postgresql://user:pass@db.xxx.supabase.co:5432/postgres?sslmode=require" \
+  python manage.py migrate && python manage.py runserver
+
+# Local com PostgreSQL embutido (pgserver, sem instalar nada):
+/home/z/.venv/bin/python scripts/start_postgres.py   # imprime a URL na última linha
+```
+
+O launcher `scripts/start_audit_stack.sh` **arranca automaticamente um
+PostgreSQL 16 embutido** (data-dir persistente `audit-pg/`, via `pgserver`)
+quando `AUDIT_DATABASE_URL` não está definida — o SQLite só é usado como
+última alternativa. Migrações, testes (456) e credenciais Fernet correm
+no mesmo motor em dev e produção.
 
 ---
 
@@ -407,7 +462,15 @@ GET  /django/api/ai/nim/images             → galeria (metadados)
 GET  /django/api/ai/nim/images/<id>/file   → JPEG da galeria
 POST /django/api/ai/nim/vision             → compreensão de imagem/vídeo (omni)
 POST /django/api/reports/ai-cover          → capa IA (FLUX 768×512) p/ relatório
-GET  /django/api/reports/audit/pdf?cover=  → PDF do relatório com capa IA
+GET  /django/api/reports/audit/pdf?cover=  → PDF com capa (FLUX ou banco)
+
+# Banco de Imagens (estilo Freepik, real)
+GET  /django/api/ai/bank/providers         → provedores + estado das chaves
+GET  /django/api/ai/bank/search            → busca (q, provider, page, page_size)
+POST /django/api/ai/bank/save              → guarda imagem no servidor (viewer+)
+GET  /django/api/ai/bank/images            → galeria guardada
+GET  /django/api/ai/bank/images/<id>/file  → ficheiro (?full=1 = original)
+DELETE /django/api/ai/bank/images/<id>     → remove (auditor/admin)
 (POST /django/api/ai/copilot aceita image_url → visão omni no chat)
 ```
 

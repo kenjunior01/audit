@@ -18,6 +18,9 @@ from .notification_views import (notifications_list, notifications_unread_count,
 from .ai_llm_views import bi_narrate, llm_status, llm_test
 from .ai_nim_views import (nim_credentials, nim_image, nim_image_file,
                            nim_images, nim_report_cover, nim_status, nim_vision)
+from .imagebank_views import (bank_image_delete, bank_image_file,
+                              bank_images, bank_providers, bank_save,
+                              bank_search)
 from .report_views import audit_report_summary_view, audit_report_pdf_view
 from .observability import metrics_view
 from .bi_views import (bi_measures, bi_measure_delete, bi_dimensions,
@@ -201,6 +204,12 @@ urlpatterns = [
     path('ai/nim/image', nim_image, name='nim_image'),
     path('ai/nim/images', nim_images, name='nim_images'),
     path('ai/nim/images/<int:pk>/file', nim_image_file, name='nim_image_file'),
+    path('ai/bank/providers', bank_providers, name='bank_providers'),
+    path('ai/bank/search', bank_search, name='bank_search'),
+    path('ai/bank/save', bank_save, name='bank_save'),
+    path('ai/bank/images', bank_images, name='bank_images'),
+    path('ai/bank/images/<int:pk>/file', bank_image_file, name='bank_image_file'),
+    path('ai/bank/images/<int:pk>', bank_image_delete, name='bank_image_delete'),
 
     # Documentação OpenAPI 3
     path('schema', SpectacularAPIView.as_view(), name='schema'),
