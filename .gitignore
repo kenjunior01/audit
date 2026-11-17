@@ -177,3 +177,7 @@ frontend/tsconfig.tsbuildinfo
 
 # galeria NIM (dados de utilizador gerados, nunca versionar)
 django_app/media/
+
+# backups locais (dump -Fc do backup_database / beat diário)
+backups/
+django_app/backups/

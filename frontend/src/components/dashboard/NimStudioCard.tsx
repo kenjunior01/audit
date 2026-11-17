@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiFetch, apiDownload, getUserRole } from '@/lib/api'
 import { useLang } from '@/lib/i18n'
-import { ImageIcon, Wand2, Eye, Loader2, Download, RefreshCw, Film, Play, Search, Trash2, FolderOpen, Images } from 'lucide-react'
+import { ImageIcon, Wand2, Eye, Loader2, Download, RefreshCw, Film, Play, Search, Trash2, FolderOpen, Images, FileText } from 'lucide-react'
 
 type GalleryItem = {
   id: number, prompt: string, width: number, height: number, steps: number,
@@ -126,6 +126,10 @@ function BankSavedTile({ item, onDelete, deleting }: { item: BankSaved, onDelete
         </div>
       )}
       <div className="absolute top-2 right-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+        <button onClick={() => apiDownload(`/reports/audit/pdf?days=30&cover=${item.id}`, 'relatorio_auditoria.pdf').catch(() => {})}
+          className="bg-white/90 dark:bg-slate-900/90 rounded-lg p-1.5 shadow" title={t('bank.cover_pdf')}>
+          <FileText className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-300" />
+        </button>
         <button onClick={() => apiDownload(item.file_url, `bank_${item.id}.jpg`).catch(() => {})}
           className="bg-white/90 dark:bg-slate-900/90 rounded-lg p-1.5 shadow" title={t('nim.download')}>
           <Download className="w-3.5 h-3.5 text-slate-600 dark:text-slate-300" />

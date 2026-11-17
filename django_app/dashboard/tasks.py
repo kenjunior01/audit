@@ -5,6 +5,7 @@ from datetime import timedelta
 from .models import ImmutableAuditLog, WebhookEvent, ExternalSystem
 import requests
 import json
+import os
 import logging
 
 logger = logging.getLogger(__name__)
@@ -379,3 +380,24 @@ def send_alert_digest(days=7, send_email=True):
             f"Digest de alertas: {stats['em_violacao']} em violação, "
             f"{stats['erro']} com erro, {stats['novos']} novo(s) — "
             f"{notificados} notificação(ões) in-app, {verb}"}
+
+
+@shared_task
+def backup_database_task(keep=10):
+    """Backup diário do PostgreSQL (CELERY_BEAT: 'db-backup-daily').
+    Best-effort: uma falha de backup nunca derruba o worker."""
+    from django.conf import settings
+    from . import pg_backup
+    try:
+        res = pg_backup.create_backup(
+            backup_dir=os.environ.get("AUDIT_BACKUP_DIR")
+            or os.path.join(settings.BASE_DIR, "backups"),
+            keep=keep, verify=True)
+        logger.info("backup PostgreSQL OK: %s (%s KB, %s itens, "
+                    "restauro verificado=%s, %s tabelas)",
+                    res.get("basename"), res.get("size_kb"), res.get("items"),
+                    res.get("verified"), res.get("restored_tables"))
+        return {"ok": True, **res}
+    except Exception as e:
+        logger.warning("backup PostgreSQL falhou (best-effort): %s", e)
+        return {"ok": False, "error": str(e)[:200]}

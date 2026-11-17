@@ -426,15 +426,33 @@ no mesmo motor em dev e produção.
 
 ### Backup real do PostgreSQL (com verificação de restauro)
 
+Três formas equivalentes (mesmo núcleo `dashboard/pg_backup.py`):
+
 ```bash
+# 1. Comando de gestão (usa AUDIT_DATABASE_URL do launcher):
+python manage.py backup_database          # --no-verify / --keep 5 / --dir X
+
+# 2. CLI standalone (arranca o PostgreSQL se preciso):
 /home/z/.venv/bin/python scripts/backup_postgres.py
-# → dump custom -Fc em /home/z/my-project/backups/audit-YYYYmmdd-HHMMSS.dump
-# → pg_restore --list + restauro VERIFICADO numa base temporária (47 tabelas)
-# → retenção: mantém os 10 mais recentes
+
+# 3. Automático — celery beat diário às 03:00 (AUDIT_BACKUP_ENABLED, default
+#    true; hora com AUDIT_BACKUP_HOUR) via dashboard.tasks.backup_database_task
 ```
 
-Funciona igualmente com `AUDIT_DATABASE_URL` externa (Supabase/Neon) —
-nessa altura salta o teste de restauro para não criar bases na cloud.
+Cada backup: dump custom `-Fc` + `pg_restore --list` (catálogo legível) +
+**restauro VERIFICADO numa base temporária** (47 tabelas; só para o
+PostgreSQL local do pgserver — com `AUDIT_DATABASE_URL` externa Supabase/
+Neon salta-se para não criar bases na cloud) + retenção dos 10 mais
+recentes. Destino: `AUDIT_BACKUP_DIR` ou `<BASE_DIR>/backups` (gitignored).
+
+### Copiloto com busca de imagens agéntica (Banco de Imagens)
+
+Perguntar «mostra imagens de escritório financeiro» ativa a tool
+`images`: o copiloto busca em openverse → met (sem chave, com fallback
+corporativo EN quando o termo PT não tem resultados), devolve até 3
+miniaturas com título/autor/licença numa grelha clicável (URL original)
+e sugere guardá-las no NIM Studio para reuso em relatórios. Falha dos
+provedores degrada para mensagem amigável — o chat nunca quebra.
 
 ### Capa IA do Relatório Global — funciona sem chave FLUX
 
