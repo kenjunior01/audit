@@ -17,7 +17,7 @@ from .notification_views import (notifications_list, notifications_unread_count,
                                  notifications_mark_read)
 from .ai_llm_views import bi_narrate, llm_status, llm_test
 from .ai_nim_views import (nim_credentials, nim_image, nim_image_file,
-                           nim_images, nim_status, nim_vision)
+                           nim_images, nim_report_cover, nim_status, nim_vision)
 from .report_views import audit_report_summary_view, audit_report_pdf_view
 from .observability import metrics_view
 from .bi_views import (bi_measures, bi_measure_delete, bi_dimensions,
@@ -150,6 +150,7 @@ urlpatterns = [
     path('notifications/read', notifications_mark_read, name='notifications_mark_read'),
 
     # Relatório Global de Auditoria (JSON preview + PDF premium)
+    path('reports/ai-cover', nim_report_cover, name='nim_report_cover'),
     path('reports/audit', audit_report_summary_view, name='audit_report_summary'),
     path('reports/audit/pdf', audit_report_pdf_view, name='audit_report_pdf'),
 

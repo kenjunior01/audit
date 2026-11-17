@@ -92,3 +92,30 @@ class ReportEndpointsTest(TestCase):
         self.assertEqual(r["Content-Type"], "application/pdf")
         self.assertIn("attachment", r["Content-Disposition"])
         self.assertGreater(len(r.content), 3000)
+
+    def test_pdf_embeds_ai_cover(self):
+        """?cover=<id> embute a capa IA no PDF — maior que o PDF sem capa."""
+        import io as _io
+        from PIL import Image as PILImage
+        from django.core.files.base import ContentFile
+        from dashboard.models import NimImage
+        buf = _io.BytesIO()
+        PILImage.new("RGB", (768, 512), (30, 58, 95)).save(buf, "JPEG")
+        rec = NimImage(prompt="[capa de teste]", width=768, height=512)
+        rec.image.save("test_cover.jpg", ContentFile(buf.getvalue()), save=True)
+        c = APIClient()
+        c.credentials(HTTP_AUTHORIZATION="Bearer " + self.t_admin)
+        r = c.get(f"/django/api/reports/audit/pdf?days=30&cover={rec.pk}")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertTrue(r.content.startswith(b"%PDF"))
+        r_plain = c.get("/django/api/reports/audit/pdf?days=30")
+        self.assertGreater(len(r.content), len(r_plain.content))
+        rec.image.delete(save=True)
+
+    def test_pdf_ignores_unknown_cover(self):
+        """cover inexistente → PDF normal (capa decorativa nunca bloqueia)."""
+        c = APIClient()
+        c.credentials(HTTP_AUTHORIZATION="Bearer " + self.t_admin)
+        r = c.get("/django/api/reports/audit/pdf?days=30&cover=99999")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertTrue(r.content.startswith(b"%PDF"))

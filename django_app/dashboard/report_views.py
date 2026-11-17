@@ -40,10 +40,15 @@ def audit_report_summary_view(request):
 @permission_classes([IsAuditorOrAdmin])
 @throttle_classes([UserRateThrottle])
 def audit_report_pdf_view(request):
-    """Gera e devolve o PDF do Relatório Global de Auditoria."""
+    """Gera e devolve o PDF do Relatório Global de Auditoria.
+    ?cover=<NimImage id> embute uma capa ilustrada gerada por IA (FLUX)."""
     days = _days(request)
-    pdf, fname, _s = build_audit_report_pdf(days=days,
-                                            generated_by=_actor(request) or 'Plataforma')
+    cover_id = request.query_params.get('cover') or ''
+    from .ai_nim_views import cover_image_bytes
+    pdf, fname, _s = build_audit_report_pdf(
+        days=days,
+        generated_by=_actor(request) or 'Plataforma',
+        cover_image=cover_image_bytes(cover_id))
     resp = HttpResponse(pdf, content_type='application/pdf')
     resp['Content-Disposition'] = f'attachment; filename="{fname}"'
     return resp

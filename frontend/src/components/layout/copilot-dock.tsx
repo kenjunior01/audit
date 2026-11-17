@@ -26,7 +26,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Sparkles, Loader2, Send, X, Copy, Check, Presentation, Lightbulb,
   ArrowRight, RotateCcw, AlertTriangle, CheckCircle2, Info, ShieldAlert,
-  Download, ThumbsUp, ThumbsDown, XCircle, Zap, Mic, MicOff,
+  Download, ThumbsUp, ThumbsDown, XCircle, Zap, Mic, MicOff, ImageIcon,
 } from 'lucide-react'
 
 /* ----------------------------- tipos ----------------------------- */
@@ -49,6 +49,7 @@ type CopilotResponse = {
   actions: Action[]
   tables: Table[]
   followups: string[]
+  vision?: { url: string, observation?: string, error?: string, media_type?: string }
   latency_ms?: number
   proposed_action?: ProposedAction
 }
@@ -117,6 +118,8 @@ export function CopilotDock() {
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState<Message[]>(loadStoredMessages)
   const [input, setInput] = useState('')
+  const [imgUrl, setImgUrl] = useState('')
+  const [imgOpen, setImgOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [liveStatus, setLiveStatus] = useState('')
@@ -155,11 +158,14 @@ export function CopilotDock() {
     if (!q || loading) return
     setError('')
     setInput('')
+    const img = imgUrl.trim()
     const history = messages.slice(-6).map(m => ({ role: m.role, content: m.content }))
-    setMessages(m => [...m, { role: 'user', content: q }])
+    setMessages(m => [...m, { role: 'user', content: img ? `${q} (imagem: ${img})` : q }])
     setLoading(true)
+    setImgOpen(false)
+    setImgUrl('')
     setLiveTrace([])
-    setLiveStatus('A interpretar a pergunta…')
+    setLiveStatus(img ? 'A analisar a imagem…' : 'A interpretar a pergunta…')
 
     const finish = (data: CopilotResponse) => {
       setMessages(m => [...m, { role: 'assistant', content: data.answer, data }])
@@ -178,7 +184,7 @@ export function CopilotDock() {
       const res = await apiFetch('/ai/copilot/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-        body: JSON.stringify({ question: q, history, page: pathname }),
+        body: JSON.stringify({ question: q, history, page: pathname, image_url: img || undefined }),
       })
       if (!res.ok || !res.body) throw new Error('stream-indisponível')
       const reader = res.body.getReader()
@@ -230,7 +236,7 @@ export function CopilotDock() {
         const r = await apiFetch('/ai/copilot', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ question: q, history, page: pathname }),
+          body: JSON.stringify({ question: q, history, page: pathname, image_url: img || undefined }),
         })
         const data = await r.json()
         if (!r.ok) throw new Error(data.error || `Erro ${r.status}`)
@@ -240,7 +246,7 @@ export function CopilotDock() {
         fail(e2.message)
       }
     } finally { setLoading(false) }
-  }, [loading, messages, pathname])
+  }, [loading, messages, pathname, imgUrl])
 
   /* -------- integração contextual: askCopilot() de qualquer página -------
    * qualquer componente dispara askCopilot('Explica o alerta 42') e o
@@ -570,6 +576,18 @@ export function CopilotDock() {
                   {listening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                 </button>
               )}
+              {imgOpen && (
+                <input value={imgUrl} onChange={e => setImgUrl(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input || 'O que vês nesta imagem?') } }}
+                  placeholder="URL da imagem (https://…)"
+                  className="w-full mb-2 bg-slate-800 border border-fuchsia-700/60 rounded-xl px-3.5 py-2 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-fuchsia-500" />
+              )}
+              <button onClick={() => setImgOpen(o => !o)} disabled={loading}
+                className={`px-3 py-2.5 rounded-xl border ${imgUrl || imgOpen ? 'bg-fuchsia-600/20 border-fuchsia-600 text-fuchsia-300' : 'bg-slate-800 border-slate-700 text-slate-300 hover:text-fuchsia-300 hover:border-fuchsia-500'} disabled:opacity-40`}
+                title="Analisar uma imagem (URL) com o motor de visão omni"
+                aria-label="Anexar imagem por URL">
+                <ImageIcon className="w-4 h-4" />
+              </button>
               <input value={input} onChange={e => setInput(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) } }}
                 placeholder={listening ? 'A ouvir… fale agora' : 'Ex.: quais os casos fora do prazo?'}
@@ -621,6 +639,19 @@ function CopilotMessage({ data, fallback, rated, onRate, onAction, onFollowup, o
       <div className="max-w-[95%] w-full space-y-2.5">
         <div className="bg-slate-800/70 rounded-2xl rounded-bl-sm px-3.5 py-3 text-sm text-slate-200 relative group">
           <Md text={data?.answer || fallback} />
+          {data?.vision?.observation && (
+            <div className="mt-2 flex items-start gap-1.5 rounded-lg bg-fuchsia-600/10 border border-fuchsia-700/40 px-2.5 py-1.5">
+              <ImageIcon className="w-3.5 h-3.5 mt-0.5 text-fuchsia-300 shrink-0" />
+              <p className="text-[11px] text-fuchsia-200/90">
+                <span className="font-semibold">Visão omni:</span> {data.vision.observation}
+              </p>
+            </div>
+          )}
+          {data?.vision?.error && (
+            <div className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-300/90">
+              <AlertTriangle className="w-3.5 h-3.5" /> Visão indisponível — resposta só com dados da plataforma.
+            </div>
+          )}
           <button onClick={copyAnswer}
             className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded bg-slate-900/80 text-slate-400 hover:text-slate-200"
             title="Copiar resposta">

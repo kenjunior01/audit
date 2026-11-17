@@ -36,6 +36,7 @@ jobs:
             dashboard.tests.test_excel_auto \
             dashboard.tests.test_seed_demo \
             dashboard.tests.test_copilot_v9 \
+            dashboard.tests.test_copilot_v10 \
             dashboard.tests.test_copilot_v8 \
             dashboard.tests.test_copilot_v7 \
             dashboard.tests.test_copilot_v6 \
