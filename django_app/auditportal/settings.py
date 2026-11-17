@@ -227,8 +227,13 @@ AUDIT_ALERTS_ENABLED = os.environ.get("AUDIT_ALERTS_ENABLED", "False").lower() i
 # Digest semanal de alertas BI — segunda-feira 08:00; email (AUDIT_DIGEST_EMAILS)
 # + Central de Notificações (in-app) com resumo executivo via LLM quando disponível.
 AUDIT_ALERT_DIGEST_ENABLED = os.environ.get("AUDIT_ALERT_DIGEST_ENABLED", "False").lower() in ("1", "true", "yes", "on")
+# Backup diário do PostgreSQL (03:00) — dump + restauro verificado; desligar
+# com AUDIT_BACKUP_ENABLED=false. Sem efeitos externos (só ficheiros locais).
+AUDIT_BACKUP_ENABLED = os.environ.get("AUDIT_BACKUP_ENABLED", "True").lower() in ("1", "true", "yes", "on")
+AUDIT_BACKUP_HOUR = int(os.environ.get("AUDIT_BACKUP_HOUR", 3))
 _beat_schedule = {}
-if AUDIT_DIGEST_ENABLED or AUDIT_ALERTS_ENABLED or AUDIT_ALERT_DIGEST_ENABLED:
+if AUDIT_DIGEST_ENABLED or AUDIT_ALERTS_ENABLED or AUDIT_ALERT_DIGEST_ENABLED \
+        or AUDIT_BACKUP_ENABLED:
     from celery.schedules import crontab
 if AUDIT_DIGEST_ENABLED:
     _beat_schedule["copilot-daily-digest"] = {
@@ -246,5 +251,11 @@ if AUDIT_ALERT_DIGEST_ENABLED:
         "task": "dashboard.tasks.send_alert_digest",
         "schedule": crontab(hour=8, minute=0, day_of_week=1),
         "args": (7,),
+    }
+if AUDIT_BACKUP_ENABLED:
+    _beat_schedule["db-backup-daily"] = {
+        "task": "dashboard.tasks.backup_database_task",
+        "schedule": crontab(hour=AUDIT_BACKUP_HOUR, minute=0),
+        "args": (10,),
     }
 CELERY_BEAT_SCHEDULE = _beat_schedule

@@ -50,6 +50,7 @@ type CopilotResponse = {
   tables: Table[]
   followups: string[]
   vision?: { url: string, observation?: string, error?: string, media_type?: string }
+  images?: { provider: string, title: string, author?: string, license?: string, url: string, thumb_url: string }[]
   latency_ms?: number
   proposed_action?: ProposedAction
 }
@@ -736,6 +737,27 @@ function CopilotMessage({ data, fallback, rated, onRate, onAction, onFollowup, o
             )}
           </div>
         ))}
+
+        {/* Imagens do Banco de Imagens (busca agéntica) */}
+        {data?.images && data.images.length > 0 && (
+          <div className="rounded-xl border border-slate-800 bg-slate-950 p-2.5">
+            <div className="grid grid-cols-3 gap-2">
+              {data.images.map((im, i) => (
+                <a key={i} href={im.url} target="_blank" rel="noreferrer"
+                  title={`${im.title} — ${im.author || ''} (${im.license || ''})`}
+                  className="group/img relative overflow-hidden rounded-lg border border-slate-800 hover:border-blue-500 transition-colors">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={im.thumb_url} alt={im.title.slice(0, 60)}
+                    className="w-full aspect-square object-cover" loading="lazy" />
+                  <span className="absolute bottom-0 left-0 right-0 truncate bg-slate-900/80 px-1 py-0.5 text-[9px] text-slate-300">
+                    {im.title} · {im.license || im.provider}
+                  </span>
+                </a>
+              ))}
+            </div>
+            <p className="text-[10px] text-slate-500 mt-1.5">Banco de Imagens — guarda-as no NIM Studio para reutilizar em relatórios.</p>
+          </div>
+        )}
 
         {/* Ações navegáveis */}
         {data?.actions && data.actions.length > 0 && (

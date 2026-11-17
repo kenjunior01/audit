@@ -126,11 +126,12 @@ _TOOL_KEYWORDS = [
     ("transactions", r"transac|pagamento|transaction|fatur|compra|despesa"),
     ("alerts", r"alerta|riscos?\b|sever|critic|alert\b|suspeit"),
     ("overview", r"resumo|overview|panorama|estado da plataforma|como esta a plataforma|como anda|situacao geral|kpi|metrica|taxa|volume"),
+    ("images", r"\bimagens?\b|\bimagem\b|\bfotos?\b|ilustra|picture|photo|\bwallpaper\b|\bcapa\b"),
 ]
 
 _TOOL_ORDER = ["help", "explain", "overview", "vendor", "forecast", "trends",
                "alerts", "transactions", "cases", "sla", "agents", "excel",
-               "benford", "duplicates"]
+               "benford", "duplicates", "images"]
 
 # Página atual (rota frontend) → tool sugerida quando a pergunta é vaga.
 # Dá ao copiloto consciência de contexto: "e agora?" na página de SLA
@@ -294,7 +295,27 @@ def extract_filters(question: str) -> dict:
         f["max_amount"] = _parse_number_pt(m.group(m.lastindex))
 
     f["vendor"] = extract_vendor(question)
+    f["image_query"] = extract_image_query(question)
     return f
+
+
+# Query para o Banco de Imagens: remove palavras de comando/genericas e
+# guarda o tema pedido ("mostra uma imagem de escritório" → "escritorio")
+_IMAGE_STOP_RE = re.compile(
+    r"\b(imagens?|imagem|imagens|fotos?|ilustra[çc][õo]es?|ilustracao|ilustracoes|"
+    r"pictures?|photos?|wallpaper|capas?|mostra|mostre|buscar|busca|busque|"
+    r"procura|procure|encontra|encontre|quero|preciso|d[aeo]s?|pode[sr]?|"
+    r"uma|um|uns|umas|alguma?s?|alguns|por favor|pf|me|para|por|sobre|com|"
+    r"no|na|nos|nas|do|da|dos|das|the|a|an|of|for|with|please|show|find|"
+    r"search|get|want|need)\b", re.IGNORECASE)
+
+
+def extract_image_query(question: str) -> str:
+    """Tema da imagem pedido na pergunta (str vazia se nada reconhecível)."""
+    q = _IMAGE_STOP_RE.sub(" ", norm_q(question))
+    q = re.sub(r"[^\w\s]", " ", q)
+    q = re.sub(r"\s+", " ", q).strip()
+    return q[:120]
 
 
 def _fmt_money(v, currency: str = "") -> str:
@@ -1241,6 +1262,69 @@ def _data_fingerprint():
         return None
 
 
+def tool_search_images(f: dict) -> dict:
+    """Busca agéntica de imagens reais no Banco de Imagens (provedores sem
+    chave: openverse → met). Devolve até 3 resultados com licença para o
+    frontend renderizar em grelha. Nunca derruba o chat (falha = mensagem
+    amigável). Estratégia multi-query: o tema pedido na língua do utilizador
+    + fallback corporativo EN (os provedores são maioritariamente EN)."""
+    query = (f.get("image_query") or "").strip()
+    from . import imagebank
+    tried = ["openverse", "met"]
+    fallback_q = "corporate office finance"
+    queries = [q for q in (query, fallback_q) if q]
+    if query == fallback_q:
+        queries = [query]
+    found, failures = [], 0
+    for provider in tried:
+        if len(found) >= 3:
+            break
+        for q in queries:
+            if len(found) >= 3:
+                break
+            try:
+                res = imagebank.search(q, provider=provider)
+            except Exception as e:
+                failures += 1
+                logger.info("copilot images %s falhou: %s", provider, e)
+                continue
+            for item in res.get("results", []):
+                url = str(item.get("url") or "")
+                thumb = str(item.get("thumb_url") or "")
+                if not url.lower().startswith(("http://", "https://")) \
+                        or not thumb:
+                    continue
+                found.append({
+                    "provider": provider,
+                    "title": str(item.get("title") or "Sem título")[:120],
+                    "author": str(item.get("author") or "")[:80],
+                    "license": str(item.get("license") or "")[:60],
+                    "url": url[:2048], "thumb_url": thumb[:2048],
+                })
+                if len(found) >= 3:
+                    break
+    used_q = query or fallback_q
+    if not found:
+        return {"tool": "images", "title": "Banco de Imagens",
+                "summary": "Não encontrei imagens agora (provedores "
+                           "indisponíveis ou termo muito específico). "
+                           "Tente outro termo, ou guarde imagens no "
+                           "NIM Studio → Banco de Imagens.",
+                "images": [], "insights": [], "meta": {"query": query}}
+    titulos = "; ".join(f"«{i['title']}» ({i['provider']}, {i['license']})"
+                        for i in found)
+    return {"tool": "images", "title": "Banco de Imagens",
+            "summary": (f"Encontrei {len(found)} imagem(ns) para "
+                        f"«{used_q}»: {titulos}. Clique numa miniatura "
+                        f"para abrir a imagem original."),
+            "images": found,
+            "insights": ["Pode guardar imagens na galeria (NIM Studio → "
+                         "Banco de Imagens) e usá-las como capa do "
+                         "Relatório Global."],
+            "meta": {"query": query, "providers": tried,
+                     "queries": queries, "failures": failures}}
+
+
 def _cacheable(tool_name: str):
     """Decorator de cache TTL para tools pesadas. Invalidada automaticamente
     quando os dados mudam (fingerprint) ou quando expira o TTL (por omissão
@@ -1284,6 +1368,7 @@ TOOL_FUNCS = {
     "help": tool_help,
     "explain": tool_explain,
     "trends": tool_trends,
+    "images": tool_search_images,
 }
 
 # Rótulos PT legíveis das ferramentas — usados no trace agéntico (UI e LLM)
@@ -1302,6 +1387,7 @@ TOOL_LABELS = {
     "excel": "Excel Studio",
     "benford": "Lei de Benford",
     "duplicates": "Duplicados",
+    "images": "Banco de Imagens",
 }
 
 
@@ -1347,6 +1433,7 @@ _TOOL_ACTIONS = {
                 {"label": "Abrir Casos", "href": "/cases"}],
     "trends": [{"label": "Ver previsão no painel", "href": "/"},
                {"label": "Abrir Riscos", "href": "/alerts"}],
+    "images": [{"label": "Abrir Banco de Imagens", "href": "/integrations"}],
 }
 
 
@@ -1544,7 +1631,7 @@ def chat_events(question: str, history: list = None, page: str = None):
                           "alertas, transações, casos, agentes, SLA, Excel…",
                         "mode": "rules", "tools_used": [], "trace": [],
                         "insights": [], "actions": [], "tables": [],
-                        "followups": [], "latency_ms": 0}}
+                        "images": [], "followups": [], "latency_ms": 0}}
         return
 
     yield {"event": "status",
@@ -1594,12 +1681,18 @@ def chat_events(question: str, history: list = None, page: str = None):
                 actions.append(a)
     actions = actions[:3]
     tables = [r["table"] for r in results if r.get("table")]
+    # imagens do Banco de Imagens (tool 'images') → grelha no frontend;
+    # nunca entram no contexto LLM (evita URLs inventados na síntese)
+    images = [i for r in results for i in (r.get("images") or [])][:3]
     followups = _followups_for(tool_names)
 
     # tentativa de síntese LLM (substitui answer/insights/actions/followups)
-    llm = call_ollama_copilot(question, results, history)
+    llm = call_ollama_copilot(
+        question,
+        [{k: v for k, v in r.items() if k != "images"} for r in results],
+        history)
     base = {"tools_used": tool_names, "trace": trace, "tables": tables,
-            "latency_ms": int((time.time() - t0) * 1000)}
+            "images": images, "latency_ms": int((time.time() - t0) * 1000)}
 
     # proposta de AÇÃO (nunca executa — frontend pede confirmação;
     # a execução real acontece em POST /ai/copilot/act com whitelist)

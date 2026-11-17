@@ -66,7 +66,8 @@ jobs:
             dashboard.tests.test_ai_llm \
             dashboard.tests.test_ai_credentials \
             dashboard.tests.test_nim_studio \
-            dashboard.tests.test_image_bank
+            dashboard.tests.test_image_bank \
+            dashboard.tests.test_pg_backup
 
   frontend:
     name: Next.js — build

@@ -158,6 +158,7 @@ const DICT: Record<string, [string, string]> = {
   'bank.saved_empty': ['Nada guardado ainda — procura e clica em Guardar.', 'Nothing saved yet — search and click Save.'],
   'bank.license': ['Licença', 'License'],
   'bank.delete': ['Remover', 'Remove'],
+  'bank.cover_pdf': ['Usar como capa do Relatório Global (PDF)', 'Use as Global Report cover (PDF)'],
   'bank.need_key': ['requer chave', 'requires key'],
   'bank.key_hint': [
     'Guarda a chave em Integrações → AI Control Plane (secção bancos de imagens).',
